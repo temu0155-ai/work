@@ -321,6 +321,7 @@ async function runAiSetup(prompt, guild) {
       ],
       tools,
       tool_choice: 'auto',
+      max_tokens: 4000,
     });
 
     const message = response.choices[0].message;
@@ -538,4 +539,4 @@ async function addOnboardingQuestion(guild, { questionTitle, options, multiSelec
   await rest.put(Routes.guildOnboarding(guild.id), { body: updatedOnboarding });
 }
 
-module.exports = { runAiSetup }; 
+module.exports = { runAiSetup };
