@@ -532,7 +532,7 @@ async function addOnboardingQuestion(guild, { questionTitle, options, multiSelec
 
   const updatedOnboarding = {
     enabled: currentOnboarding.enabled ?? true,
-    default_channel_ids: currentOnboarding.default_channel_ids || [],
+    default_channel_ids: (currentOnboarding.default_channel_ids || []).filter(id => guild.channels.cache.has(id)),
     questions: [...existingQuestions, newQuestion],
   };
 
