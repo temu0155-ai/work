@@ -1,542 +1,383 @@
-// ai-tools.js - FULL SERVER ADMIN BOT
+// ai-tools.js
+// Discord AI setup assistant — powered by NVIDIA NIM (free hosted endpoint)
+// Model: qwen/qwen3.5-122b-a10b (122B MoE, 10B active — agent-ready / tool-calling)
+
 const OpenAI = require('openai');
-const { REST, Routes, PermissionFlagsBits } = require('discord.js');
+const { PermissionFlagsBits, ChannelType } = require('discord.js');
 
 const client = new OpenAI({
-  apiKey: process.env.NVIDIA_API_KEY,
+  apiKey: process.env.NVIDIA_API_KEY, // starts with "nvapi-", from build.nvidia.com/settings/api-keys
   baseURL: 'https://integrate.api.nvidia.com/v1',
 });
 
-const tools = [
-  // ===== CHANNELS =====
-  {
-    type: 'function',
-    function: {
-      name: 'create_channel',
-      description: 'Create a text, voice, or announcement channel',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          type: { type: 'string', enum: ['text', 'voice', 'announcement'] },
-          categoryName: { type: 'string' },
-          topic: { type: 'string', description: 'Channel description/topic' },
-        },
-        required: ['name', 'type'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'delete_channel',
-      description: 'Delete a channel by name',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-        },
-        required: ['name'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'edit_channel',
-      description: 'Edit channel name, topic, or category',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', description: 'Current channel name' },
-          newName: { type: 'string' },
-          topic: { type: 'string' },
-          categoryName: { type: 'string' },
-        },
-        required: ['name'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'create_category',
-      description: 'Create a channel category',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-        },
-        required: ['name'],
-      },
-    },
-  },
+// ---- Conversation memory, per Discord channel ----
+// Lives in memory only — resets if the bot restarts, which is fine for setup sessions.
+const conversationHistory = new Map();
+const MAX_HISTORY_MESSAGES = 12; // ~6 exchanges of context
 
-  // ===== ROLES =====
-  {
-    type: 'function',
-    function: {
-      name: 'create_role',
-      description: 'Create a role with optional color and permissions',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          color: { type: 'string', description: 'Hex color like #FF0000 or name like "Red"' },
-          permissions: { type: 'array', items: { type: 'string' }, description: 'Permission names like "Administrator", "KickMembers", "BanMembers"' },
-        },
-        required: ['name'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'delete_role',
-      description: 'Delete a role by name',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-        },
-        required: ['name'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'assign_role',
-      description: 'Assign a role to a user by username or ID',
-      parameters: {
-        type: 'object',
-        properties: {
-          username: { type: 'string', description: 'Username or user ID' },
-          roleName: { type: 'string' },
-        },
-        required: ['username', 'roleName'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'remove_role',
-      description: 'Remove a role from a user',
-      parameters: {
-        type: 'object',
-        properties: {
-          username: { type: 'string' },
-          roleName: { type: 'string' },
-        },
-        required: ['username', 'roleName'],
-      },
-    },
-  },
+function getHistory(sessionId) {
+  return conversationHistory.get(sessionId) || [];
+}
 
-  // ===== MEMBERS =====
-  {
-    type: 'function',
-    function: {
-      name: 'kick_member',
-      description: 'Kick a member from the server',
-      parameters: {
-        type: 'object',
-        properties: {
-          username: { type: 'string' },
-          reason: { type: 'string' },
-        },
-        required: ['username'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'ban_member',
-      description: 'Ban a member from the server',
-      parameters: {
-        type: 'object',
-        properties: {
-          username: { type: 'string' },
-          reason: { type: 'string' },
-          deleteMessageDays: { type: 'number', description: 'Delete messages from last X days (0-7)' },
-        },
-        required: ['username'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'unban_member',
-      description: 'Unban a user by ID',
-      parameters: {
-        type: 'object',
-        properties: {
-          userId: { type: 'string' },
-        },
-        required: ['userId'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'timeout_member',
-      description: 'Timeout a member (mute them) for X minutes',
-      parameters: {
-        type: 'object',
-        properties: {
-          username: { type: 'string' },
-          minutes: { type: 'number' },
-          reason: { type: 'string' },
-        },
-        required: ['username', 'minutes'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'set_nickname',
-      description: 'Change a member\'s nickname',
-      parameters: {
-        type: 'object',
-        properties: {
-          username: { type: 'string' },
-          nickname: { type: 'string' },
-        },
-        required: ['username', 'nickname'],
-      },
-    },
-  },
+function pushHistory(sessionId, entries) {
+  const updated = [...getHistory(sessionId), ...entries].slice(-MAX_HISTORY_MESSAGES);
+  conversationHistory.set(sessionId, updated);
+}
 
-  // ===== MESSAGES =====
-  {
-    type: 'function',
-    function: {
-      name: 'send_message',
-      description: 'Send a message to a channel',
-      parameters: {
-        type: 'object',
-        properties: {
-          channelName: { type: 'string' },
-          content: { type: 'string' },
-          embed: { type: 'object', description: 'Optional embed object with title, description, color' },
-        },
-        required: ['channelName', 'content'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'delete_message',
-      description: 'Delete a message by ID',
-      parameters: {
-        type: 'object',
-        properties: {
-          channelName: { type: 'string' },
-          messageId: { type: 'string' },
-        },
-        required: ['channelName', 'messageId'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'pin_message',
-      description: 'Pin a message in a channel',
-      parameters: {
-        type: 'object',
-        properties: {
-          channelName: { type: 'string' },
-          messageId: { type: 'string' },
-        },
-        required: ['channelName', 'messageId'],
-      },
-    },
-  },
+// Permission names the AI is allowed to use — these map directly to discord.js's PermissionFlagsBits.
+const PERMISSION_NAMES = [
+  'Administrator', 'ManageChannels', 'ManageRoles', 'KickMembers', 'BanMembers',
+  'ManageMessages', 'MentionEveryone', 'ManageWebhooks', 'ManageNicknames',
+  'ViewChannel', 'SendMessages', 'ReadMessageHistory', 'Connect', 'Speak',
+  'MuteMembers', 'DeafenMembers',
+];
 
-  // ===== ONBOARDING =====
+function resolvePermissions(names = []) {
+  return names.filter((n) => PERMISSION_NAMES.includes(n));
+}
+
+function findChannel(guild, name) {
+  return guild.channels.cache.find((c) => c.name.toLowerCase() === String(name).toLowerCase());
+}
+
+function findRole(guild, name) {
+  if (name === '@everyone') return guild.roles.everyone;
+  return guild.roles.cache.find((r) => r.name.toLowerCase() === String(name).toLowerCase());
+}
+
+async function findMember(guild, name) {
+  const members = await guild.members.fetch();
+  return members.find(
+    (m) =>
+      m.user.username.toLowerCase() === String(name).toLowerCase() ||
+      m.displayName.toLowerCase() === String(name).toLowerCase()
+  );
+}
+
+// Every action the AI can take. destructive: true means it only runs if the
+// word "confirm" appears somewhere in the admin's original prompt.
+const toolDefs = [
   {
-    type: 'function',
-    function: {
-      name: 'update_onboarding',
-      description: 'Add a question to server onboarding',
-      parameters: {
-        type: 'object',
-        properties: {
-          questionTitle: { type: 'string' },
-          options: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                emoji: { type: 'string' },
-                name: { type: 'string' },
-                roleToAssign: { type: 'string', description: 'Optional role name to auto-assign' },
-              },
-            },
+    name: 'create_category',
+    destructive: false,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'create_category',
+        description: 'Create a channel category to group channels under',
+        parameters: {
+          type: 'object',
+          properties: { name: { type: 'string' } },
+          required: ['name'],
+        },
+      },
+    },
+    run: async (args, guild) => {
+      const cat = await guild.channels.create({ name: args.name, type: ChannelType.GuildCategory });
+      return `Created category "${cat.name}"`;
+    },
+  },
+  {
+    name: 'create_channel',
+    destructive: false,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'create_channel',
+        description: 'Create a text or voice channel, optionally inside a category',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            type: { type: 'string', enum: ['text', 'voice'] },
+            categoryName: { type: 'string', description: 'Existing or just-created category to place this channel under' },
+            topic: { type: 'string', description: 'Optional topic/description, text channels only' },
           },
-          multiSelect: { type: 'boolean' },
+          required: ['name', 'type'],
         },
-        required: ['questionTitle', 'options'],
       },
     },
+    run: async (args, guild) => {
+      const parent = args.categoryName
+        ? guild.channels.cache.find(
+            (c) => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === args.categoryName.toLowerCase()
+          )
+        : undefined;
+      const channel = await guild.channels.create({
+        name: args.name,
+        type: args.type === 'voice' ? ChannelType.GuildVoice : ChannelType.GuildText,
+        parent: parent?.id,
+        topic: args.type !== 'voice' ? args.topic : undefined,
+      });
+      return `Created ${args.type} channel "${channel.name}"${parent ? ` under ${parent.name}` : ''}`;
+    },
   },
-
-  // ===== SERVER SETTINGS =====
   {
-    type: 'function',
-    function: {
-      name: 'edit_server',
-      description: 'Edit server name, icon, or verification level',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string' },
-          verificationLevel: { type: 'string', enum: ['none', 'low', 'medium', 'high', 'very_high'] },
+    name: 'create_role',
+    destructive: false,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'create_role',
+        description: 'Create a role, optionally with a color, hoist (shown separately in the member list), and permissions',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            color: { type: 'string', description: 'Hex code like "#5865F2"' },
+            hoist: { type: 'boolean' },
+            permissions: { type: 'array', items: { type: 'string', enum: PERMISSION_NAMES } },
+          },
+          required: ['name'],
         },
       },
+    },
+    run: async (args, guild) => {
+      const role = await guild.roles.create({
+        name: args.name,
+        color: args.color || undefined,
+        hoist: !!args.hoist,
+        permissions: resolvePermissions(args.permissions),
+      });
+      return `Created role "${role.name}"`;
+    },
+  },
+  {
+    name: 'assign_role',
+    destructive: false,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'assign_role',
+        description: 'Give an existing role to a specific server member',
+        parameters: {
+          type: 'object',
+          properties: {
+            roleName: { type: 'string' },
+            memberName: { type: 'string', description: 'Username or display name' },
+          },
+          required: ['roleName', 'memberName'],
+        },
+      },
+    },
+    run: async (args, guild) => {
+      const role = findRole(guild, args.roleName);
+      if (!role) return `Couldn't find a role named "${args.roleName}"`;
+      const member = await findMember(guild, args.memberName);
+      if (!member) return `Couldn't find a member named "${args.memberName}"`;
+      await member.roles.add(role);
+      return `Gave "${role.name}" to ${member.displayName}`;
+    },
+  },
+  {
+    name: 'remove_role',
+    destructive: false,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'remove_role',
+        description: 'Remove a role from a specific server member',
+        parameters: {
+          type: 'object',
+          properties: {
+            roleName: { type: 'string' },
+            memberName: { type: 'string', description: 'Username or display name' },
+          },
+          required: ['roleName', 'memberName'],
+        },
+      },
+    },
+    run: async (args, guild) => {
+      const role = findRole(guild, args.roleName);
+      if (!role) return `Couldn't find a role named "${args.roleName}"`;
+      const member = await findMember(guild, args.memberName);
+      if (!member) return `Couldn't find a member named "${args.memberName}"`;
+      await member.roles.remove(role);
+      return `Removed "${role.name}" from ${member.displayName}`;
+    },
+  },
+  {
+    name: 'edit_channel',
+    destructive: false,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'edit_channel',
+        description: 'Rename a channel, change its topic, or set slowmode',
+        parameters: {
+          type: 'object',
+          properties: {
+            channelName: { type: 'string' },
+            newName: { type: 'string' },
+            topic: { type: 'string' },
+            slowmodeSeconds: { type: 'number', description: '0 to disable' },
+          },
+          required: ['channelName'],
+        },
+      },
+    },
+    run: async (args, guild) => {
+      const channel = findChannel(guild, args.channelName);
+      if (!channel) return `Couldn't find a channel named "${args.channelName}"`;
+      if (args.newName) await channel.setName(args.newName);
+      if (args.topic !== undefined) await channel.setTopic(args.topic);
+      if (args.slowmodeSeconds !== undefined) await channel.setRateLimitPerUser(args.slowmodeSeconds);
+      return `Updated "${channel.name}"`;
+    },
+  },
+  {
+    name: 'set_channel_permissions',
+    destructive: false,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'set_channel_permissions',
+        description: 'Allow or deny permissions for a role in one channel — e.g. make a channel private or read-only',
+        parameters: {
+          type: 'object',
+          properties: {
+            channelName: { type: 'string' },
+            roleName: { type: 'string', description: 'Use "@everyone" for the default role' },
+            allow: { type: 'array', items: { type: 'string', enum: PERMISSION_NAMES } },
+            deny: { type: 'array', items: { type: 'string', enum: PERMISSION_NAMES } },
+          },
+          required: ['channelName', 'roleName'],
+        },
+      },
+    },
+    run: async (args, guild) => {
+      const channel = findChannel(guild, args.channelName);
+      if (!channel) return `Couldn't find a channel named "${args.channelName}"`;
+      const role = findRole(guild, args.roleName);
+      if (!role) return `Couldn't find a role named "${args.roleName}"`;
+
+      const overwrites = {};
+      for (const name of args.allow || []) overwrites[name] = true;
+      for (const name of args.deny || []) overwrites[name] = false;
+
+      await channel.permissionOverwrites.edit(role, overwrites);
+      return `Updated permissions for "${role.name}" in "${channel.name}"`;
+    },
+  },
+  {
+    name: 'delete_channel',
+    destructive: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'delete_channel',
+        description: 'Permanently delete a channel',
+        parameters: {
+          type: 'object',
+          properties: { channelName: { type: 'string' } },
+          required: ['channelName'],
+        },
+      },
+    },
+    run: async (args, guild) => {
+      const channel = findChannel(guild, args.channelName);
+      if (!channel) return `Couldn't find a channel named "${args.channelName}"`;
+      const name = channel.name;
+      await channel.delete();
+      return `Deleted channel "${name}"`;
+    },
+  },
+  {
+    name: 'delete_role',
+    destructive: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'delete_role',
+        description: 'Permanently delete a role',
+        parameters: {
+          type: 'object',
+          properties: { roleName: { type: 'string' } },
+          required: ['roleName'],
+        },
+      },
+    },
+    run: async (args, guild) => {
+      const role = findRole(guild, args.roleName);
+      if (!role) return `Couldn't find a role named "${args.roleName}"`;
+      const name = role.name;
+      await role.delete();
+      return `Deleted role "${name}"`;
     },
   },
 ];
 
-async function runAiSetup(prompt, guild) {
-  try {
-    console.log(`[AI] Sending request to NVIDIA for prompt: "${prompt.substring(0, 50)}..."`);
-    
-    const response = await client.chat.completions.create({
-      model: 'qwen/qwen3.5-397b-a17b',
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You are a Discord server administrator with FULL control. Use the provided tools to manage channels, roles, members, messages, onboarding, and server settings based on the user request. Be precise with usernames and channel names.',
-        },
-        { role: 'user', content: prompt },
-      ],
-      tools,
-      tool_choice: 'auto',
-      max_tokens: 4000,
-    });
+const toolsByName = Object.fromEntries(toolDefs.map((t) => [t.name, t]));
+const tools = toolDefs.map((t) => t.schema);
 
-    const message = response.choices[0].message;
-    const calls = message.tool_calls || [];
+// sessionId ties memory to a place — pass interaction.channelId so each
+// channel's /setup conversation has its own thread of context.
+async function runAiSetup(prompt, guild, sessionId) {
+  const history = sessionId ? getHistory(sessionId) : [];
+
+  const response = await client.chat.completions.create({
+    model: 'qwen/qwen3.5-122b-a10b',
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are a Discord server setup assistant with memory of this conversation. Use the provided tools to create and manage channels, categories, roles, permissions, and role assignments based on the request. Create categories before the channels that belong in them. If asked for a full server setup, be thorough. Use earlier messages in this conversation for context — e.g. "that category" refers to one just created.',
+      },
+      ...history,
+      { role: 'user', content: prompt },
+    ],
+    tools,
+    tool_choice: 'auto',
+  });
+
+  const message = response.choices[0].message;
+  const calls = message.tool_calls || [];
+
+  let summary;
+
+  if (calls.length === 0) {
+    summary = message.content || 'No actions were taken.';
+  } else {
+    const userConfirmed = /\bconfirm\b/i.test(prompt);
     const results = [];
+    const blocked = [];
 
     for (const call of calls) {
+      const tool = toolsByName[call.function.name];
+      if (!tool) continue;
       const args = JSON.parse(call.function.arguments);
-      console.log(`[AI] Executing: ${call.function.name}`, args);
+
+      if (tool.destructive && !userConfirmed) {
+        blocked.push(`${call.function.name.replace('_', ' ')}: ${args.channelName || args.roleName}`);
+        continue;
+      }
 
       try {
-        const result = await executeTool(call.function.name, args, guild);
-        results.push(result);
+        results.push(await tool.run(args, guild));
       } catch (err) {
-        console.error(`[AI] Tool error:`, err.message);
-        results.push(`❌ ${call.function.name} failed: ${err.message}`);
+        results.push(`Failed on ${call.function.name}: ${err.message}`);
       }
     }
 
-    return results.length > 0
-      ? `✅ Done! Executed ${results.length} action(s):\n${results.join('\n')}`
-      : message.content || 'No actions were taken.';
-
-  } catch (error) {
-    console.error('[AI ERROR]', error.message);
-    throw error;
-  }
-}
-
-async function executeTool(toolName, args, guild) {
-  switch (toolName) {
-    case 'create_channel':
-      const channel = await guild.channels.create({
-        name: args.name,
-        type: args.type === 'voice' ? 2 : args.type === 'announcement' ? 5 : 0,
-        topic: args.topic,
-      });
-      return `✅ Created channel: #${channel.name}`;
-
-    case 'delete_channel':
-      const delChannel = guild.channels.cache.find(c => c.name === args.name);
-      if (delChannel) {
-        await delChannel.delete();
-        return `✅ Deleted channel: #${args.name}`;
-      }
-      return `❌ Channel #${args.name} not found`;
-
-    case 'edit_channel':
-      const editChannel = guild.channels.cache.find(c => c.name === args.name);
-      if (editChannel) {
-        await editChannel.edit({
-          name: args.newName,
-          topic: args.topic,
-        });
-        return `✅ Edited channel: #${args.name}`;
-      }
-      return `❌ Channel #${args.name} not found`;
-
-    case 'create_category':
-      const category = await guild.channels.create({
-        name: args.name,
-        type: 4,
-      });
-      return `✅ Created category: ${category.name}`;
-
-    case 'create_role':
-      const role = await guild.roles.create({
-        name: args.name,
-        color: args.color,
-        permissions: args.permissions ? args.permissions.map(p => PermissionFlagsBits[p]) : [],
-      });
-      return `✅ Created role: @${role.name}`;
-
-    case 'delete_role':
-      const delRole = guild.roles.cache.find(r => r.name === args.name);
-      if (delRole) {
-        await delRole.delete();
-        return `✅ Deleted role: @${args.name}`;
-      }
-      return `❌ Role @${args.name} not found`;
-
-    case 'assign_role':
-      const member = guild.members.cache.find(m => m.user.username === args.username || m.user.tag === args.username || m.id === args.username);
-      const roleToAssign = guild.roles.cache.find(r => r.name === args.roleName);
-      if (member && roleToAssign) {
-        await member.roles.add(roleToAssign);
-        return `✅ Assigned @${args.roleName} to ${args.username}`;
-      }
-      return `❌ User or role not found`;
-
-    case 'remove_role':
-      const member2 = guild.members.cache.find(m => m.user.username === args.username || m.user.tag === args.username);
-      const roleToRemove = guild.roles.cache.find(r => r.name === args.roleName);
-      if (member2 && roleToRemove) {
-        await member2.roles.remove(roleToRemove);
-        return `✅ Removed @${args.roleName} from ${args.username}`;
-      }
-      return `❌ User or role not found`;
-
-    case 'kick_member':
-      const kickMember = guild.members.cache.find(m => m.user.username === args.username || m.user.tag === args.username);
-      if (kickMember) {
-        await kickMember.kick(args.reason);
-        return `✅ Kicked ${args.username}`;
-      }
-      return `❌ User ${args.username} not found`;
-
-    case 'ban_member':
-      const banMember = guild.members.cache.find(m => m.user.username === args.username || m.user.tag === args.username);
-      if (banMember) {
-        await banMember.ban({ reason: args.reason, deleteMessageDays: args.deleteMessageDays || 0 });
-        return `✅ Banned ${args.username}`;
-      }
-      return `❌ User ${args.username} not found`;
-
-    case 'unban_member':
-      await guild.members.unban(args.userId);
-      return `✅ Unbanned user ID ${args.userId}`;
-
-    case 'timeout_member':
-      const timeoutMember = guild.members.cache.find(m => m.user.username === args.username || m.user.tag === args.username);
-      if (timeoutMember) {
-        await timeoutMember.timeout(args.minutes * 60 * 1000, args.reason);
-        return `✅ Timed out ${args.username} for ${args.minutes} minutes`;
-      }
-      return `❌ User ${args.username} not found`;
-
-    case 'set_nickname':
-      const nickMember = guild.members.cache.find(m => m.user.username === args.username || m.user.tag === args.username);
-      if (nickMember) {
-        await nickMember.setNickname(args.nickname);
-        return `✅ Set nickname for ${args.username} to ${args.nickname}`;
-      }
-      return `❌ User ${args.username} not found`;
-
-    case 'send_message':
-      const msgChannel = guild.channels.cache.find(c => c.name === args.channelName);
-      if (msgChannel) {
-        await msgChannel.send(args.content);
-        return `✅ Sent message to #${args.channelName}`;
-      }
-      return `❌ Channel #${args.channelName} not found`;
-
-    case 'delete_message':
-      const delMsgChannel = guild.channels.cache.find(c => c.name === args.channelName);
-      if (delMsgChannel) {
-        const msg = await delMsgChannel.messages.fetch(args.messageId);
-        await msg.delete();
-        return `✅ Deleted message`;
-      }
-      return `❌ Channel not found`;
-
-    case 'pin_message':
-      const pinChannel = guild.channels.cache.find(c => c.name === args.channelName);
-      if (pinChannel) {
-        const msg = await pinChannel.messages.fetch(args.messageId);
-        await msg.pin();
-        return `✅ Pinned message`;
-      }
-      return `❌ Channel not found`;
-
-    case 'update_onboarding':
-      await addOnboardingQuestion(guild, args);
-      return `✅ Added onboarding question: "${args.questionTitle}"`;
-
-    case 'edit_server':
-      await guild.edit({
-        name: args.name,
-        verificationLevel: args.verificationLevel ? ['NONE', 'LOW', 'MEDIUM', 'HIGH', 'VERY_HIGH'].indexOf(args.verificationLevel.toUpperCase()) : undefined,
-      });
-      return `✅ Edited server settings`;
-
-    default:
-      return `️ Unknown tool: ${toolName}`;
-  }
-}
-
-async function addOnboardingQuestion(guild, { questionTitle, options, multiSelect = false }) {
-  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-  
-  let currentOnboarding;
-  try {
-    currentOnboarding = await rest.get(Routes.guildOnboarding(guild.id));
-  } catch (err) {
-    currentOnboarding = { enabled: true, questions: [], default_channel_ids: [] };
+    summary = results.length ? `Done!\n${results.join('\n')}` : '';
+    if (blocked.length) {
+      summary += `${summary ? '\n\n' : ''}Skipped these deletions for safety — add the word "confirm" to your prompt if you really want them:\n${blocked.join('\n')}`;
+    }
+    summary = summary || message.content || 'No actions were taken.';
   }
 
-  const newQuestion = {
-    id: null,
-    title: questionTitle,
-    options: options.map((opt, i) => ({
-      id: null,
-      title: `${opt.emoji || ''} ${opt.name}`.trim(),
-      description: null,
-      emoji: opt.emoji ? { name: opt.emoji } : null,
-      role_ids: opt.roleToAssign ? [guild.roles.cache.find(r => r.name === opt.roleToAssign)?.id].filter(Boolean) : [],
-      channel_ids: [],
-    })),
-    single_select: !multiSelect,
-    required: false,
-    in_onboarding: true,
-  };
+  if (summary.length > 1900) {
+    summary = summary.slice(0, 1900) + '\n...(truncated — check your server to see everything that was created)';
+  }
 
-  const existingQuestions = (currentOnboarding.questions || []).map(q => ({
-    ...q,
-    in_onboarding: true,
-  }));
+  if (sessionId) {
+    pushHistory(sessionId, [
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: summary },
+    ]);
+  }
 
-  const updatedOnboarding = {
-    enabled: currentOnboarding.enabled ?? true,
-    default_channel_ids: (currentOnboarding.default_channel_ids || []).filter(id => guild.channels.cache.has(id)),
-    questions: [...existingQuestions, newQuestion],
-  };
-
-  await rest.put(Routes.guildOnboarding(guild.id), { body: updatedOnboarding });
+  return summary;
 }
 
 module.exports = { runAiSetup };
