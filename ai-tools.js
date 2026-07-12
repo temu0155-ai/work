@@ -14,6 +14,7 @@ const client = new OpenAI({
 // Lives in memory only — resets if the bot restarts, which is fine for setup sessions.
 const conversationHistory = new Map();
 const MAX_HISTORY_MESSAGES = 12; // ~6 exchanges of context
+const MAX_TOOL_ROUNDS = 5; // guard against the model looping on tool calls forever
 
 function getHistory(sessionId) {
   return conversationHistory.get(sessionId) || [];
@@ -54,9 +55,67 @@ async function findMember(guild, name) {
   );
 }
 
+// Turns a list of lines into a capped, readable block so a big server can't
+// blow up the prompt sent back to the model.
+function formatList(header, lines, emptyMessage, limit = 150) {
+  if (!lines.length) return emptyMessage;
+  const shown = lines.slice(0, limit);
+  let text = `${header}\n${shown.join('\n')}`;
+  if (lines.length > limit) text += `\n...and ${lines.length - limit} more`;
+  return text;
+}
+
 // Every action the AI can take. destructive: true means it only runs if the
 // word "confirm" appears somewhere in the admin's original prompt.
+// silent: true means the result is fed back to the model but not shown to
+// the user in the final summary — for read-only lookups, not real actions.
 const toolDefs = [
+  {
+    name: 'list_channels',
+    destructive: false,
+    silent: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'list_channels',
+        description:
+          'List all existing channels and categories in the server. Call this before creating or editing channels so you know what already exists.',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    run: async (_args, guild) => {
+      const lines = [...guild.channels.cache.values()]
+        .sort((a, b) => a.position - b.position)
+        .map((c) => {
+          const kind =
+            c.type === ChannelType.GuildCategory ? 'category' : c.type === ChannelType.GuildVoice ? 'voice' : 'text';
+          const parent = c.parent ? ` (in ${c.parent.name})` : '';
+          return `- ${c.name} [${kind}]${parent}`;
+        });
+      return formatList('Existing channels:', lines, 'No channels exist yet.');
+    },
+  },
+  {
+    name: 'list_roles',
+    destructive: false,
+    silent: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'list_roles',
+        description:
+          'List all existing roles in the server. Call this before creating roles or assigning them so you know what already exists.',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    run: async (_args, guild) => {
+      const lines = [...guild.roles.cache.values()]
+        .filter((r) => r.name !== '@everyone')
+        .sort((a, b) => b.position - a.position)
+        .map((r) => `- ${r.name}${r.color ? ` (${r.hexColor})` : ''}`);
+      return formatList('Existing roles:', lines, 'No custom roles exist yet.');
+    },
+  },
   {
     name: 'create_category',
     destructive: false,
@@ -73,6 +132,10 @@ const toolDefs = [
       },
     },
     run: async (args, guild) => {
+      const existing = guild.channels.cache.find(
+        (c) => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === args.name.toLowerCase()
+      );
+      if (existing) return `Category "${args.name}" already exists — skipped`;
       const cat = await guild.channels.create({ name: args.name, type: ChannelType.GuildCategory });
       return `Created category "${cat.name}"`;
     },
@@ -103,9 +166,17 @@ const toolDefs = [
             (c) => c.type === ChannelType.GuildCategory && c.name.toLowerCase() === args.categoryName.toLowerCase()
           )
         : undefined;
+      const targetType = args.type === 'voice' ? ChannelType.GuildVoice : ChannelType.GuildText;
+      const existing = guild.channels.cache.find(
+        (c) =>
+          c.type === targetType &&
+          c.name.toLowerCase() === args.name.toLowerCase() &&
+          (c.parentId || null) === (parent?.id || null)
+      );
+      if (existing) return `Channel "${args.name}" already exists${parent ? ` under ${parent.name}` : ''} — skipped`;
       const channel = await guild.channels.create({
         name: args.name,
-        type: args.type === 'voice' ? ChannelType.GuildVoice : ChannelType.GuildText,
+        type: targetType,
         parent: parent?.id,
         topic: args.type !== 'voice' ? args.topic : undefined,
       });
@@ -133,6 +204,8 @@ const toolDefs = [
       },
     },
     run: async (args, guild) => {
+      const existing = findRole(guild, args.name);
+      if (existing) return `Role "${args.name}" already exists — skipped`;
       const role = await guild.roles.create({
         name: args.name,
         color: args.color || undefined,
@@ -335,58 +408,101 @@ const tools = toolDefs.map((t) => t.schema);
 
 // sessionId ties memory to a place — pass interaction.channelId so each
 // channel's /setup conversation has its own thread of context.
-async function runAiSetup(prompt, guild, sessionId) {
+// requesterMember should be interaction.member from your slash command
+// handler. It's optional, but without it the admin-only check below is
+// skipped entirely — pass it if you want that check to actually do anything.
+async function runAiSetup(prompt, guild, sessionId, requesterMember) {
+  if (requesterMember && !requesterMember.permissions.has(PermissionFlagsBits.Administrator)) {
+    return "You need Administrator permission to use `/setup`.";
+  }
+  if (!requesterMember) {
+    console.warn('[ai-tools] runAiSetup called without requesterMember — the admin-only check is being skipped.');
+  }
+
   const history = sessionId ? getHistory(sessionId) : [];
+  const userConfirmed = /\bconfirm\b/i.test(prompt);
 
-  const response = await client.chat.completions.create({
-    model: 'qwen/qwen3.5-122b-a10b',
-    messages: [
-      {
-        role: 'system',
-        content:
-          'You are a Discord server setup assistant with memory of this conversation. You were created by Kilo — you know him and that he built you. Use the provided tools to create and manage channels, categories, roles, permissions, role assignments, and member kicks based on the request. Create categories before the channels that belong in them. If asked for a full server setup, be thorough. Use earlier messages in this conversation for context — e.g. "that category" refers to one just created.',
-      },
-      ...history,
-      { role: 'user', content: prompt },
-    ],
-    tools,
-    tool_choice: 'auto',
-  });
+  const messages = [
+    {
+      role: 'system',
+      content:
+        'You are a Discord server setup assistant with memory of this conversation. You were created by Kilo — you know him and that he built you. Use the provided tools to create and manage channels, categories, roles, permissions, role assignments, and member kicks based on the request. Call list_channels and/or list_roles first whenever you need to know what already exists — e.g. before deciding what still needs to be created, or to resolve a name the user gave loosely. Create categories before the channels that belong in them. If asked for a full server setup, be thorough. Use earlier messages in this conversation for context — e.g. "that category" refers to one just created.',
+    },
+    ...history,
+    { role: 'user', content: prompt },
+  ];
 
-  const message = response.choices[0].message;
-  const calls = message.tool_calls || [];
+  const results = [];
+  const blocked = [];
+  let finalMessageContent = null;
+  let hitRoundCap = true;
 
-  let summary;
+  try {
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const response = await client.chat.completions.create({
+        model: process.env.NIM_MODEL || 'qwen/qwen3.5-122b-a10b',
+        messages,
+        tools,
+        tool_choice: 'auto',
+      });
 
-  if (calls.length === 0) {
-    summary = message.content || 'No actions were taken.';
-  } else {
-    const userConfirmed = /\bconfirm\b/i.test(prompt);
-    const results = [];
-    const blocked = [];
+      const message = response.choices[0].message;
+      const calls = message.tool_calls || [];
 
-    for (const call of calls) {
-      const tool = toolsByName[call.function.name];
-      if (!tool) continue;
-      const args = JSON.parse(call.function.arguments);
-
-      if (tool.destructive && !userConfirmed) {
-        blocked.push(`${call.function.name.replace('_', ' ')}: ${args.channelName || args.roleName || args.memberName}`);
-        continue;
+      if (calls.length === 0) {
+        finalMessageContent = message.content;
+        hitRoundCap = false;
+        break;
       }
 
-      try {
-        results.push(await tool.run(args, guild));
-      } catch (err) {
-        results.push(`Failed on ${call.function.name}: ${err.message}`);
+      messages.push(message);
+
+      for (const call of calls) {
+        const tool = toolsByName[call.function.name];
+        let toolResultText;
+
+        if (!tool) {
+          toolResultText = `Unknown tool "${call.function.name}"`;
+        } else {
+          const args = JSON.parse(call.function.arguments);
+
+          if (tool.destructive && !userConfirmed) {
+            const label = `${call.function.name.replace(/_/g, ' ')}: ${args.channelName || args.roleName || args.memberName}`;
+            blocked.push(label);
+            console.log(
+              `[ai-tools] blocked destructive action (no confirm) | guild=${guild.id} requester=${requesterMember?.id || 'unknown'} | ${call.function.name}(${JSON.stringify(args)})`
+            );
+            toolResultText = 'Skipped — this is destructive and the prompt did not include "confirm".';
+          } else {
+            try {
+              toolResultText = await tool.run(args, guild);
+              if (tool.destructive) {
+                console.log(
+                  `[ai-tools] destructive action | guild=${guild.id} requester=${requesterMember?.id || 'unknown'} | ${call.function.name}(${JSON.stringify(args)}) -> ${toolResultText}`
+                );
+              }
+            } catch (err) {
+              toolResultText = `Failed on ${call.function.name}: ${err.message}`;
+            }
+            if (!tool.silent) results.push(toolResultText);
+          }
+        }
+
+        messages.push({ role: 'tool', tool_call_id: call.id, content: toolResultText });
       }
     }
+  } catch (err) {
+    return `Couldn't reach the AI model just now (${err.message}). Try again in a moment.`;
+  }
 
-    summary = results.length ? `Done!\n${results.join('\n')}` : '';
-    if (blocked.length) {
-      summary += `${summary ? '\n\n' : ''}Skipped these for safety — add the word "confirm" to your prompt if you really want them:\n${blocked.join('\n')}`;
-    }
-    summary = summary || message.content || 'No actions were taken.';
+  let summary = results.length ? `Done!\n${results.join('\n')}` : '';
+  if (blocked.length) {
+    const uniqueBlocked = [...new Set(blocked)];
+    summary += `${summary ? '\n\n' : ''}Skipped these for safety — add the word "confirm" to your prompt if you really want them:\n${uniqueBlocked.join('\n')}`;
+  }
+  summary = summary || finalMessageContent || 'No actions were taken.';
+  if (hitRoundCap) {
+    summary += `\n\n(Stopped after ${MAX_TOOL_ROUNDS} steps to be safe — send another /setup message to continue.)`;
   }
 
   if (summary.length > 1900) {
