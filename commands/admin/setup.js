@@ -22,7 +22,7 @@ module.exports = {
       // 🔍 LOG: About to call AI
       console.log(`[SETUP] Calling NVIDIA AI API...`);
       
-      const result = await runAiSetup(prompt, interaction.guild);
+      const result = await runAiSetup(prompt, interaction.guild, interaction.channelId);
       
       // 🔍 LOG: AI responded successfully
       console.log(`[SETUP] Success! Result:`, result.substring(0, 100) + '...');
