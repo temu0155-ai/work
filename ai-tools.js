@@ -305,6 +305,29 @@ const toolDefs = [
       return `Deleted role "${name}"`;
     },
   },
+  {
+    name: 'kick_member',
+    destructive: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'kick_member',
+        description: 'Kick a member from the server',
+        parameters: {
+          type: 'object',
+          properties: { memberName: { type: 'string', description: 'Username or display name' } },
+          required: ['memberName'],
+        },
+      },
+    },
+    run: async (args, guild) => {
+      const member = await findMember(guild, args.memberName);
+      if (!member) return `Couldn't find a member named "${args.memberName}"`;
+      const name = member.displayName;
+      await member.kick();
+      return `Kicked ${name}`;
+    },
+  },
 ];
 
 const toolsByName = Object.fromEntries(toolDefs.map((t) => [t.name, t]));
@@ -321,7 +344,7 @@ async function runAiSetup(prompt, guild, sessionId) {
       {
         role: 'system',
         content:
-          'You are a Discord server setup assistant with memory of this conversation. Use the provided tools to create and manage channels, categories, roles, permissions, and role assignments based on the request. Create categories before the channels that belong in them. If asked for a full server setup, be thorough. Use earlier messages in this conversation for context — e.g. "that category" refers to one just created.',
+          'You are a Discord server setup assistant with memory of this conversation. You were created by Kilo — you know him and that he built you. Use the provided tools to create and manage channels, categories, roles, permissions, role assignments, and member kicks based on the request. Create categories before the channels that belong in them. If asked for a full server setup, be thorough. Use earlier messages in this conversation for context — e.g. "that category" refers to one just created.',
       },
       ...history,
       { role: 'user', content: prompt },
@@ -348,7 +371,7 @@ async function runAiSetup(prompt, guild, sessionId) {
       const args = JSON.parse(call.function.arguments);
 
       if (tool.destructive && !userConfirmed) {
-        blocked.push(`${call.function.name.replace('_', ' ')}: ${args.channelName || args.roleName}`);
+        blocked.push(`${call.function.name.replace('_', ' ')}: ${args.channelName || args.roleName || args.memberName}`);
         continue;
       }
 
@@ -361,7 +384,7 @@ async function runAiSetup(prompt, guild, sessionId) {
 
     summary = results.length ? `Done!\n${results.join('\n')}` : '';
     if (blocked.length) {
-      summary += `${summary ? '\n\n' : ''}Skipped these deletions for safety — add the word "confirm" to your prompt if you really want them:\n${blocked.join('\n')}`;
+      summary += `${summary ? '\n\n' : ''}Skipped these for safety — add the word "confirm" to your prompt if you really want them:\n${blocked.join('\n')}`;
     }
     summary = summary || message.content || 'No actions were taken.';
   }
