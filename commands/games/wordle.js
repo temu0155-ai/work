@@ -14,13 +14,13 @@ module.exports = {
         const evaluation = evaluateGuess(guess, targetWord);
         const resultBlock = formatGuessBlock(evaluation);
         if (guess === targetWord) {
-            await interaction.reply({ content: "🎉 **Richtig erraten!** Du hast das heutige Wort gefunden!
+            await interaction.reply({ content: `🎉 **Richtig erraten!** Du hast das heutige Wort gefunden!
 
-" + resultBlock });
+${resultBlock}` });
         } else {
-            await interaction.reply({ content: "Versuch es weiter! Dein Tipp:
+            await interaction.reply({ content: `Versuch es weiter! Dein Tipp:
 
-" + resultBlock, ephemeral: true });
+${resultBlock}`, ephemeral: true });
         }
     }
 };
