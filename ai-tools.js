@@ -4,6 +4,7 @@
 
 const OpenAI = require('openai');
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
+const { PERSONA } = require('./utils/persona');
 
 const client = new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY, // starts with "nvapi-", from build.nvidia.com/settings/api-keys
@@ -426,7 +427,7 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
     {
       role: 'system',
       content:
-        'You are a Discord server setup assistant with memory of this conversation. You were created by Kilo — you know him and that he built you. Use the provided tools to create and manage channels, categories, roles, permissions, role assignments, and member kicks based on the request. Call list_channels and/or list_roles first whenever you need to know what already exists — e.g. before deciding what still needs to be created, or to resolve a name the user gave loosely. Create categories before the channels that belong in them. If asked for a full server setup, be thorough. Use earlier messages in this conversation for context — e.g. "that category" refers to one just created.',
+        `${PERSONA}\n\nYou're also the server's setup assistant with memory of this conversation. You were created by Kilo — you know him and that he built you. Use the provided tools to create and manage channels, categories, roles, permissions, role assignments, and member kicks based on the request. Call list_channels and/or list_roles first whenever you need to know what already exists — e.g. before deciding what still needs to be created, or to resolve a name the user gave loosely. Create categories before the channels that belong in them. If asked for a full server setup, be thorough. Use earlier messages in this conversation for context — e.g. "that category" refers to one just created. Keep your final summary short and casual, matching your voice — you don't need to narrate every step formally.`,
     },
     ...history,
     { role: 'user', content: prompt },
@@ -444,51 +445,77 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
         messages,
         tools,
         tool_choice: 'auto',
+        max_tokens: 700,
+        // Qwen3.5 is a "thinking" model — left on, it can burn its whole
+        // token budget on hidden reasoning and leave message.content
+        // empty (the actual text ends up in reasoning_content instead),
+        // which both slows every call down and causes the "No actions
+        // were taken" fallback to fire even when nothing went wrong.
+        // Turning it off fixes both.
+        extra_body: { chat_template_kwargs: { enable_thinking: false } },
       });
 
       const message = response.choices[0].message;
       const calls = message.tool_calls || [];
 
       if (calls.length === 0) {
-        finalMessageContent = message.content;
+        // Belt-and-suspenders: if thinking still slips through (or a
+        // future model swap reintroduces it), fall back to
+        // reasoning_content rather than silently showing "No actions
+        // were taken."
+        finalMessageContent = message.content || message.reasoning_content || null;
         hitRoundCap = false;
         break;
       }
 
       messages.push(message);
 
-      for (const call of calls) {
-        const tool = toolsByName[call.function.name];
-        let toolResultText;
+      // Tool calls within a single round are independent of each other
+      // (the model already decided on all of them before seeing any
+      // results), so run them concurrently instead of one at a time.
+      const callResults = await Promise.all(
+        calls.map(async (call) => {
+          const tool = toolsByName[call.function.name];
+          let toolResultText;
 
-        if (!tool) {
-          toolResultText = `Unknown tool "${call.function.name}"`;
-        } else {
-          const args = JSON.parse(call.function.arguments);
-
-          if (tool.destructive && !userConfirmed) {
-            const label = `${call.function.name.replace(/_/g, ' ')}: ${args.channelName || args.roleName || args.memberName}`;
-            blocked.push(label);
-            console.log(
-              `[ai-tools] blocked destructive action (no confirm) | guild=${guild.id} requester=${requesterMember?.id || 'unknown'} | ${call.function.name}(${JSON.stringify(args)})`
-            );
-            toolResultText = 'Skipped — this is destructive and the prompt did not include "confirm".';
+          if (!tool) {
+            toolResultText = `Unknown tool "${call.function.name}"`;
           } else {
-            try {
-              toolResultText = await tool.run(args, guild);
-              if (tool.destructive) {
-                console.log(
-                  `[ai-tools] destructive action | guild=${guild.id} requester=${requesterMember?.id || 'unknown'} | ${call.function.name}(${JSON.stringify(args)}) -> ${toolResultText}`
-                );
-              }
-            } catch (err) {
-              toolResultText = `Failed on ${call.function.name}: ${err.message}`;
-            }
-            if (!tool.silent) results.push(toolResultText);
-          }
-        }
+            const args = JSON.parse(call.function.arguments);
 
-        messages.push({ role: 'tool', tool_call_id: call.id, content: toolResultText });
+            if (tool.destructive && !userConfirmed) {
+              const label = `${call.function.name.replace(/_/g, ' ')}: ${args.channelName || args.roleName || args.memberName}`;
+              blocked.push(label);
+              console.log(
+                `[ai-tools] blocked destructive action (no confirm) | guild=${guild.id} requester=${requesterMember?.id || 'unknown'} | ${call.function.name}(${JSON.stringify(args)})`
+              );
+              toolResultText = 'Skipped — this is destructive and the prompt did not include "confirm".';
+            } else {
+              try {
+                toolResultText = await tool.run(args, guild);
+                if (tool.destructive) {
+                  console.log(
+                    `[ai-tools] destructive action | guild=${guild.id} requester=${requesterMember?.id || 'unknown'} | ${call.function.name}(${JSON.stringify(args)}) -> ${toolResultText}`
+                  );
+                }
+              } catch (err) {
+                toolResultText = `Failed on ${call.function.name}: ${err.message}`;
+              }
+            }
+          }
+
+          return { id: call.id, toolResultText, silent: tool?.silent };
+        })
+      );
+
+      // Push non-silent results in the model's original call order (not
+      // completion order, since Promise.all can finish them out of order).
+      for (const { toolResultText, silent } of callResults) {
+        if (!silent) results.push(toolResultText);
+      }
+
+      for (const { id, toolResultText } of callResults) {
+        messages.push({ role: 'tool', tool_call_id: id, content: toolResultText });
       }
     }
   } catch (err) {
