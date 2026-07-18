@@ -27,6 +27,8 @@ jobs:
           echo "NVIDIA_API_KEY=${{ secrets.NVIDIA_API_KEY }}" >> .env
           echo "CLIENT_ID=${{ secrets.CLIENT_ID }}" >> .env
           echo "GUILD_ID=${{ secrets.GUILD_ID }}" >> .env
+          echo "TURSO_DATABASE_URL=${{ secrets.TURSO_DATABASE_URL }}" >> .env
+          echo "TURSO_AUTH_TOKEN=${{ secrets.TURSO_AUTH_TOKEN }}" >> .env
 
       - name: Run Discord Bot
         run: node index.js
