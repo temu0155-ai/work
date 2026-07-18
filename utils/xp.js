@@ -107,7 +107,6 @@ async function getRankPosition(guildId, userId) {
   });
   return Number(res.rows[0].higher_count) + 1;
 }
-
 module.exports = {
   xpForLevel,
   ensureUser,
