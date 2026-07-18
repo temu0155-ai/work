@@ -18,7 +18,7 @@ const client = new Client({
 
 // Music player attached to the client so commands can reach it via interaction.client.distube
 client.distube = new DisTube(client, {
-  plugins: [new YtDlpPlugin({ update: false })],
+  plugins: [new YtDlpPlugin()],
   emitNewSongOnly: true,
 });
 
