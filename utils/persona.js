@@ -49,7 +49,7 @@ async function generateChatReply(channelId, prompt) {
     model: process.env.NIM_MODEL || 'qwen/qwen3.5-122b-a10b',
     messages,
     max_tokens: 300,
-    extra_body: { chat_template_kwargs: { enable_thinking: false } },
+    echat_template_kwargs: { enable_thinking: false },
   });
 
   const reply = response.choices[0].message.content || "my brain kinda blanked there, say that again?";
