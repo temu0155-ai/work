@@ -58,5 +58,4 @@ function formatGuessBlock(evaluation) {
   const squares = evaluation.map((e) => EMOJI[e.status]).join('');
   return `\`${letters}\`\n${squares}`;
 }
-
 module.exports = { todayDateString, getWordForDate, dateDiffDays, evaluateGuess, formatGuessBlock };
