@@ -12,6 +12,7 @@
   "type": "commonjs",
   "dependencies": {
     "@distube/yt-dlp": "^2.0.1",
+    "@libsql/client": "^0.14.0",
     "discord.js": "^14.26.5",
     "distube": "^5.2.3",
     "dotenv": "^17.4.2",
