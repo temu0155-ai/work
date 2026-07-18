@@ -452,7 +452,7 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
         // which both slows every call down and causes the "No actions
         // were taken" fallback to fire even when nothing went wrong.
         // Turning it off fixes both.
-        extra_body: { chat_template_kwargs: { enable_thinking: false } },
+       chat_template_kwargs: { enable_thinking: false },
       });
 
       const message = response.choices[0].message;
