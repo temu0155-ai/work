@@ -24,7 +24,7 @@ module.exports = {
 
     try {
       console.log(`[SETUP] Calling NVIDIA AI API...`);
-      const result = await runAiSetup(prompt, interaction.guild, interaction.channelId);
+      const result = await runAiSetup(prompt, interaction.guild, interaction.channelId, interaction.member);
       console.log(`[SETUP] Success! Result:`, result.substring(0, 100) + '...');
       await interaction.editReply(result);
     } catch (error) {
