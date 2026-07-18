@@ -61,5 +61,4 @@ async function generateChatReply(channelId, prompt) {
 
   return reply;
 }
-
 module.exports = { PERSONA, generateChatReply };
