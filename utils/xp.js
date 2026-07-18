@@ -1,4 +1,4 @@
-D// utils/xp.js
+// utils/xp.js
 // Core leveling logic shared by the message/voice trackers and the
 // /rank and /leaderboard commands.
 
