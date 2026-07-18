@@ -1,16 +1,27 @@
-// utils/wordFilter.js
-const Filter = require('bad-words');
-const filter = new Filter();
+// events/wordFilter.js
+const { Events } = require('discord.js');
+const { containsBannedWord } = require('../utils/wordFilter');
 
-// Add any extra words the default list doesn't catch:
-// filter.addWords('word1', 'word2');
+const MOD_LOG_CHANNEL_ID = '1465376570674905367';
+const flagCounts = new Map(); // userId -> count, in-memory (resets on restart)
 
-// Remove any the default list flags that you don't want caught (e.g. it can
-// be overly broad sometimes):
-// filter.removeWords('word1', 'word2');
+module.exports = {
+  name: Events.MessageCreate,
+  once: false,
+  async execute(message, client) {
+    if (message.author.bot || !message.guild) return;
+    if (!containsBannedWord(message.content)) return;
 
-function containsBannedWord(text) {
-  return filter.isProfane(text);
-}
+    const count = (flagCounts.get(message.author.id) || 0) + 1;
+    flagCounts.set(message.author.id, count);
 
-module.exports = { containsBannedWord };
+    const logChannel = client.channels.cache.get(MOD_LOG_CHANNEL_ID);
+    if (logChannel) {
+      logChannel
+        .send(`⚠️ ${message.author} flagged in ${message.channel} — total: **${count}**`)
+        .catch((err) => console.error('[wordFilter] Failed to send mod log:', err));
+    } else {
+      console.warn(`[wordFilter] Mod log channel ${MOD_LOG_CHANNEL_ID} not found or bot lacks access.`);
+    }
+  },
+};
