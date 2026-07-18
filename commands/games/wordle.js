@@ -2,7 +2,7 @@
 // Pure game logic for the daily word game — no Discord/DB code, easy to
 // unit test standalone.
 
-const WORDS = require('../data/words');
+const WORDS = require('../../data/words');
 
 function todayDateString() {
   return new Date().toISOString().slice(0, 10); // e.g. "2026-07-18", UTC-based
