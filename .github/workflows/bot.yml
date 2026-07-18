@@ -30,5 +30,9 @@ jobs:
           echo "TURSO_DATABASE_URL=${{ secrets.TURSO_DATABASE_URL }}" >> .env
           echo "TURSO_AUTH_TOKEN=${{ secrets.TURSO_AUTH_TOKEN }}" >> .env
 
+      # Registers /wordle, /setup, and your other commands with Discord's API
+      - name: Register Slash Commands
+        run: node deploy-commands.js
+
       - name: Run Discord Bot
         run: node index.js
