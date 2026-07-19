@@ -5,11 +5,9 @@
  * This is the "crazy" one: real risk, real payout, public embarrassment
  * on failure. Built to generate chat drama, which is the point.
  *
- * ASSUMPTIONS (match to your actual utils/economy.js):
- *   - getBalance(userId, guildId)   -> number
- *   - addBalance(userId, guildId, amount)    -> adds (can be negative to subtract)
- *   If your economy.js uses different names, just swap the imports/calls —
- *   the game logic below doesn't need to change.
+ * Matches your actual utils/economy.js:
+ *   - getBalance(guildId, userId)          -> number
+ *   - addBalance(guildId, userId, amount)  -> adds (can be negative to subtract), clamped at 0
  *
  * MECHANIC:
  *   - Target must have at least MIN_TARGET_BALANCE coins, or robbing them
@@ -23,7 +21,7 @@
  */
 
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { getBalance, addBalance } = require('../../utils/economy'); // adjust path if needed
+const { getBalance, addBalance } = require('../../utils/economy');
 
 const SUCCESS_RATE = 0.45;
 const MIN_TARGET_BALANCE = 50;
@@ -68,7 +66,7 @@ module.exports = {
       });
     }
 
-    const targetBalance = await getBalance(target.id, guildId);
+    const targetBalance = await getBalance(guildId, target.id);
     if (targetBalance < MIN_TARGET_BALANCE) {
       return interaction.reply({
         content: `${target.username} is too broke to bother robbing. Find a richer target.`,
@@ -76,7 +74,7 @@ module.exports = {
       });
     }
 
-    const robberBalance = await getBalance(robber.id, guildId);
+    const robberBalance = await getBalance(guildId, robber.id);
     cooldowns.set(robber.id, now);
 
     const success = Math.random() < SUCCESS_RATE;
@@ -85,8 +83,8 @@ module.exports = {
       const pct = STEAL_RANGE[0] + Math.random() * (STEAL_RANGE[1] - STEAL_RANGE[0]);
       const stolen = Math.min(Math.floor(targetBalance * pct), MAX_STEAL);
 
-      await addBalance(target.id, guildId, -stolen);
-      await addBalance(robber.id, guildId, stolen);
+      await addBalance(guildId, target.id, -stolen);
+      await addBalance(guildId, robber.id, stolen);
 
       const embed = new EmbedBuilder()
         .setColor(0x2ecc71)
@@ -98,8 +96,8 @@ module.exports = {
       const paid = Math.max(fine, 0);
 
       if (paid > 0) {
-        await addBalance(robber.id, guildId, -paid);
-        await addBalance(target.id, guildId, paid);
+        await addBalance(guildId, robber.id, -paid);
+        await addBalance(guildId, target.id, paid);
       }
 
       const embed = new EmbedBuilder()
