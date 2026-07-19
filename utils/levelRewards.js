@@ -26,7 +26,7 @@
  * the final level.
  */
 
-const { addBalance } = require('./economy'); // adjust path/name if different
+const { addBalance } = require('./economy'); // signature: addBalance(guildId, userId, amount)
 
 // Edit this table to whatever makes sense for your server(s).
 // role: exact role name to auto-assign (bot needs Manage Roles + role position above it)
@@ -64,7 +64,7 @@ async function checkLevelRewards(member, oldLevel, newLevel, announceChannel) {
     // --- Coin reward ---
     if (reward.coins) {
       try {
-        await addBalance(member.id, member.guild.id, reward.coins);
+        await addBalance(member.guild.id, member.id, reward.coins);
         results.push(`**${reward.coins}** coins`);
       } catch (err) {
         console.error(`[levelRewards] Failed to add coins for level ${lvl}:`, err);
@@ -77,44 +77,6 @@ async function checkLevelRewards(member, oldLevel, newLevel, announceChannel) {
         `🎉 ${member} just hit **Level ${lvl}** and earned ${results.join(' + ')}!`
       ).catch(() => {});
     }
-  }
-}
-
-module.exports = { checkLevelRewards, LEVEL_REWARDS };
-async function checkLevelRewards(member, newLevel, announceChannel) {
-  const reward = LEVEL_REWARDS[newLevel];
-  if (!reward) return; // no reward tier at this exact level
-
-  const results = [];
-
-  // --- Role reward ---
-  if (reward.role) {
-    try {
-      const role = member.guild.roles.cache.find(r => r.name === reward.role);
-      if (role && !member.roles.cache.has(role.id)) {
-        await member.roles.add(role);
-        results.push(`the **${role.name}** role`);
-      }
-    } catch (err) {
-      console.error(`[levelRewards] Failed to assign role for level ${newLevel}:`, err);
-    }
-  }
-
-  // --- Coin reward ---
-  if (reward.coins) {
-    try {
-      await addBalance(member.id, member.guild.id, reward.coins);
-      results.push(`**${reward.coins}** coins`);
-    } catch (err) {
-      console.error(`[levelRewards] Failed to add coins for level ${newLevel}:`, err);
-    }
-  }
-
-  // --- Announce ---
-  if (results.length && announceChannel) {
-    announceChannel.send(
-      `🎉 ${member} just hit **Level ${newLevel}** and earned ${results.join(' + ')}!`
-    ).catch(() => {});
   }
 }
 
