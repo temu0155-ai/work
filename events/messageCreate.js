@@ -1,5 +1,6 @@
 const { Events } = require('discord.js');
 const { addMessageXp } = require('../utils/xp');
+const { checkLevelRewards } = require('../utils/levelRewards');
 
 module.exports = {
   name: Events.MessageCreate,
@@ -13,6 +14,8 @@ module.exports = {
         message.channel
           .send(`🎉 ${message.author} just reached **level ${result.level}**!`)
           .catch(() => {}); // don't crash if the bot lacks send perms in this channel
+
+        await checkLevelRewards(message.member, result.oldLevel, result.level, message.channel);
       }
     } catch (err) {
       console.error('[xp] Failed to award message XP:', err);
