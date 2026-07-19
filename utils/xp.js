@@ -1,119 +1,83 @@
-// utils/xp.js
-// Core leveling logic shared by the message/voice trackers and the
-// /rank and /leaderboard commands.
+/**
+ * utils/levelRewards.js
+ *
+ * Ties level-ups to auto-assigned roles + a coin payout.
+ *
+ * ASSUMPTIONS (adjust to match your actual utils/economy.js and db/index.js):
+ *   - economy.js exports:  addBalance(userId, guildId, amount)
+ *   - db/index.js exports: db (a Turso client) — used here only if you want
+ *     to persist "highest level rewarded" so restarts don't cause re-awards.
+ *     If your xp.js already only fires on the exact level-up moment (not on
+ *     every message), you can skip the DB check entirely — see NOTE below.
+ *
+ * HOW TO WIRE IT IN:
+ * In your message/voice handler (wherever addMessageXp/addVoiceXp is
+ * called), after xp.js's applyXp() returns { leveledUp, oldLevel, level, xp }:
+ *
+ *     const { checkLevelRewards } = require('./levelRewards');
+ *     ...
+ *     const result = await addMessageXp(guildId, userId);
+ *     if (result?.leveledUp) {
+ *       await checkLevelRewards(message.member, result.oldLevel, result.level, message.channel);
+ *     }
+ *
+ * Handles multi-level jumps (e.g. a big voice XP chunk pushing someone from
+ * level 4 straight to 7) by checking every milestone in between, not just
+ * the final level.
+ */
 
-const { db } = require('../db');
+const { addBalance } = require('./economy'); // adjust path/name if different
 
-// XP required to go from `level` to `level + 1`. This is the classic
-// MEE6-style curve — starts cheap, ramps up gradually.
-function xpForLevel(level) {
-  return 5 * level * level + 50 * level + 100;
-}
-
-async function ensureUser(guildId, userId) {
-  await db.execute({
-    sql: 'INSERT INTO levels (guild_id, user_id) VALUES (?, ?) ON CONFLICT(guild_id, user_id) DO NOTHING',
-    args: [guildId, userId],
-  });
-}
-
-async function getUser(guildId, userId) {
-  const res = await db.execute({
-    sql: 'SELECT * FROM levels WHERE guild_id = ? AND user_id = ?',
-    args: [guildId, userId],
-  });
-  return res.rows[0] || null;
-}
-
-// Applies `xpAmount` to a user, handling level-up rollover, and persists
-// message/voice stat counters. Returns { leveledUp, level, xp } so callers
-// (message/voice trackers) can announce level-ups.
-async function applyXp(guildId, userId, xpAmount, { messageDelta = 0, voiceMinutesDelta = 0, lastMessageAt } = {}) {
-  await ensureUser(guildId, userId);
-  const user = await getUser(guildId, userId);
-
-  let xp = Number(user.xp) + xpAmount;
-  let level = Number(user.level);
-  let leveledUp = false;
-  let required = xpForLevel(level);
-
-  while (xp >= required) {
-    xp -= required;
-    level += 1;
-    leveledUp = true;
-    required = xpForLevel(level);
-  }
-
-  const messages = Number(user.messages) + messageDelta;
-  const voiceMinutes = Number(user.voice_minutes) + voiceMinutesDelta;
-  const lastMessageAtValue = lastMessageAt ?? Number(user.last_message_at);
-
-  await db.execute({
-    sql: `UPDATE levels
-          SET xp = ?, level = ?, messages = ?, voice_minutes = ?, last_message_at = ?
-          WHERE guild_id = ? AND user_id = ?`,
-    args: [xp, level, messages, voiceMinutes, lastMessageAtValue, guildId, userId],
-  });
-
-  return { leveledUp, level, xp, xpForNext: required };
-}
-
-const MESSAGE_XP_MIN = 15;
-const MESSAGE_XP_MAX = 25;
-const MESSAGE_COOLDOWN_MS = 60_000; // one XP-earning message per minute per user
-
-async function addMessageXp(guildId, userId) {
-  await ensureUser(guildId, userId);
-  const user = await getUser(guildId, userId);
-  const now = Date.now();
-
-  if (now - Number(user.last_message_at) < MESSAGE_COOLDOWN_MS) {
-    return null; // still on cooldown, no XP awarded
-  }
-
-  const amount = Math.floor(Math.random() * (MESSAGE_XP_MAX - MESSAGE_XP_MIN + 1)) + MESSAGE_XP_MIN;
-  return applyXp(guildId, userId, amount, { messageDelta: 1, lastMessageAt: now });
-}
-
-const VOICE_XP_PER_MINUTE = 8;
-
-async function addVoiceXp(guildId, userId, minutes) {
-  if (minutes <= 0) return null;
-  const amount = Math.round(minutes * VOICE_XP_PER_MINUTE);
-  if (amount <= 0) return null;
-  return applyXp(guildId, userId, amount, { voiceMinutesDelta: minutes });
-}
-
-async function getLeaderboard(guildId, limit = 10) {
-  const res = await db.execute({
-    sql: 'SELECT * FROM levels WHERE guild_id = ? ORDER BY level DESC, xp DESC LIMIT ?',
-    args: [guildId, limit],
-  });
-  return res.rows;
-}
-
-// 1-indexed position of a user on their guild's leaderboard.
-async function getRankPosition(guildId, userId) {
-  const res = await db.execute({
-    sql: `SELECT COUNT(*) as higher_count FROM levels
-          WHERE guild_id = ? AND (
-            level > (SELECT level FROM levels WHERE guild_id = ? AND user_id = ?)
-            OR (
-              level = (SELECT level FROM levels WHERE guild_id = ? AND user_id = ?)
-              AND xp > (SELECT xp FROM levels WHERE guild_id = ? AND user_id = ?)
-            )
-          )`,
-    args: [guildId, guildId, userId, guildId, userId, guildId, userId],
-  });
-  return Number(res.rows[0].higher_count) + 1;
-}
-module.exports = {
-  xpForLevel,
-  ensureUser,
-  getUser,
-  applyXp,
-  addMessageXp,
-  addVoiceXp,
-  getLeaderboard,
-  getRankPosition,
+// Edit this table to whatever makes sense for your server(s).
+// role: exact role name to auto-assign (bot needs Manage Roles + role position above it)
+// coins: economy payout on hitting this level
+const LEVEL_REWARDS = {
+  5:  { role: 'Regular',      coins: 100 },
+  10: { role: 'Trusted',      coins: 250 },
+  20: { role: 'Veteran',      coins: 500 },
+  30: { role: 'Elite',        coins: 1000 },
+  50: { role: 'Legend',       coins: 2500 },
 };
+
+async function checkLevelRewards(member, oldLevel, newLevel, announceChannel) {
+  // Check every level crossed, not just the final one — a big voice XP
+  // chunk can jump someone past several milestones in a single update.
+  for (let lvl = oldLevel + 1; lvl <= newLevel; lvl++) {
+    const reward = LEVEL_REWARDS[lvl];
+    if (!reward) continue;
+
+    const results = [];
+
+    // --- Role reward ---
+    if (reward.role) {
+      try {
+        const role = member.guild.roles.cache.find(r => r.name === reward.role);
+        if (role && !member.roles.cache.has(role.id)) {
+          await member.roles.add(role);
+          results.push(`the **${role.name}** role`);
+        }
+      } catch (err) {
+        console.error(`[levelRewards] Failed to assign role for level ${lvl}:`, err);
+      }
+    }
+
+    // --- Coin reward ---
+    if (reward.coins) {
+      try {
+        await addBalance(member.id, member.guild.id, reward.coins);
+        results.push(`**${reward.coins}** coins`);
+      } catch (err) {
+        console.error(`[levelRewards] Failed to add coins for level ${lvl}:`, err);
+      }
+    }
+
+    // --- Announce ---
+    if (results.length && announceChannel) {
+      announceChannel.send(
+        `🎉 ${member} just hit **Level ${lvl}** and earned ${results.join(' + ')}!`
+      ).catch(() => {});
+    }
+  }
+}
+
+module.exports = { checkLevelRewards, LEVEL_REWARDS };
