@@ -1,5 +1,5 @@
 // utils/economy.js
-// Simple currency system backing /blackjack, /wordle, /daily, /balance.
+// Simple currency system backing /blackjack, /wordle, /daily, /balance, /rob.
 // Lives in the same Turso DB as leveling, in its own `economy` table.
 
 const { db } = require('../db');
@@ -46,11 +46,9 @@ async function claimDaily(guildId, userId) {
   const account = await getAccount(guildId, userId);
   const now = Date.now();
   const elapsed = now - Number(account.last_daily_at);
-
   if (elapsed < DAILY_COOLDOWN_MS) {
     return { claimed: false, msRemaining: DAILY_COOLDOWN_MS - elapsed };
   }
-
   const newBalance = Number(account.balance) + DAILY_AMOUNT;
   await db.execute({
     sql: 'UPDATE economy SET balance = ?, last_daily_at = ? WHERE guild_id = ? AND user_id = ?',
@@ -59,4 +57,23 @@ async function claimDaily(guildId, userId) {
   return { claimed: true, amount: DAILY_AMOUNT, newBalance };
 }
 
-module.exports = { STARTING_BALANCE, DAILY_AMOUNT, ensureAccount, getAccount, getBalance, addBalance, claimDaily };
+// Persists the timestamp of a /rob attempt so the cooldown survives
+// restarts/redeploys, same pattern as last_daily_at above.
+async function setLastRobAt(guildId, userId, timestamp) {
+  await ensureAccount(guildId, userId);
+  await db.execute({
+    sql: 'UPDATE economy SET last_rob_at = ? WHERE guild_id = ? AND user_id = ?',
+    args: [timestamp, guildId, userId],
+  });
+}
+
+module.exports = {
+  STARTING_BALANCE,
+  DAILY_AMOUNT,
+  ensureAccount,
+  getAccount,
+  getBalance,
+  addBalance,
+  claimDaily,
+  setLastRobAt,
+};
