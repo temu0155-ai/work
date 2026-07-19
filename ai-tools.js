@@ -1,15 +1,23 @@
 // ai-tools.js
-// Discord AI setup assistant — powered by NVIDIA NIM (free hosted endpoint)
-// Model: qwen/qwen3.5-122b-a10b (122B MoE, 10B active — agent-ready / tool-calling)
+// Discord AI setup assistant — powered by OpenRouter (same provider as
+// utils/persona.js, one API key for both).
+// Model: set via OPENROUTER_MODEL env var (shared with persona.js), defaults
+// to meta-llama/llama-3.1-70b-instruct, which supports tool/function calling.
 
 const OpenAI = require('openai');
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
 const { PERSONA } = require('./utils/persona');
 
 const client = new OpenAI({
-  apiKey: process.env.NVIDIA_API_KEY, // starts with "nvapi-", from build.nvidia.com/settings/api-keys
-  baseURL: 'https://integrate.api.nvidia.com/v1',
+  apiKey: process.env.OPENROUTER_API_KEY,
+  baseURL: 'https://openrouter.ai/api/v1',
+  defaultHeaders: {
+    'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'https://github.com/temu0155-ai/work',
+    'X-Title': 'Kilos Bot',
+  },
 });
+
+const MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-70b-instruct';
 
 // ---- Conversation memory, per Discord channel ----
 // Lives in memory only — resets if the bot restarts, which is fine for setup sessions.
@@ -441,29 +449,18 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const response = await client.chat.completions.create({
-        model: process.env.NIM_MODEL || 'qwen/qwen3.5-122b-a10b',
+        model: MODEL,
         messages,
         tools,
         tool_choice: 'auto',
         max_tokens: 700,
-        // Qwen3.5 is a "thinking" model — left on, it can burn its whole
-        // token budget on hidden reasoning and leave message.content
-        // empty (the actual text ends up in reasoning_content instead),
-        // which both slows every call down and causes the "No actions
-        // were taken" fallback to fire even when nothing went wrong.
-        // Turning it off fixes both.
-       chat_template_kwargs: { enable_thinking: false },
       });
 
       const message = response.choices[0].message;
       const calls = message.tool_calls || [];
 
       if (calls.length === 0) {
-        // Belt-and-suspenders: if thinking still slips through (or a
-        // future model swap reintroduces it), fall back to
-        // reasoning_content rather than silently showing "No actions
-        // were taken."
-        finalMessageContent = message.content || message.reasoning_content || null;
+        finalMessageContent = message.content || null;
         hitRoundCap = false;
         break;
       }
