@@ -1,3 +1,4 @@
+cat > ai-tools.js << 'ENDOFFILE'
 // ai-tools.js
 // Discord AI setup assistant — powered by OpenRouter (same provider as
 // utils/persona.js, one API key for both).
@@ -19,11 +20,9 @@ const client = new OpenAI({
 
 const MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-70b-instruct';
 
-// ---- Conversation memory, per Discord channel ----
-// Lives in memory only — resets if the bot restarts, which is fine for setup sessions.
 const conversationHistory = new Map();
-const MAX_HISTORY_MESSAGES = 12; // ~6 exchanges of context
-const MAX_TOOL_ROUNDS = 5; // guard against the model looping on tool calls forever
+const MAX_HISTORY_MESSAGES = 12;
+const MAX_TOOL_ROUNDS = 5;
 
 function getHistory(sessionId) {
   return conversationHistory.get(sessionId) || [];
@@ -34,7 +33,6 @@ function pushHistory(sessionId, entries) {
   conversationHistory.set(sessionId, updated);
 }
 
-// Permission names the AI is allowed to use — these map directly to discord.js's PermissionFlagsBits.
 const PERMISSION_NAMES = [
   'Administrator', 'ManageChannels', 'ManageRoles', 'KickMembers', 'BanMembers',
   'ManageMessages', 'MentionEveryone', 'ManageWebhooks', 'ManageNicknames',
@@ -64,8 +62,6 @@ async function findMember(guild, name) {
   );
 }
 
-// Turns a list of lines into a capped, readable block so a big server can't
-// blow up the prompt sent back to the model.
 function formatList(header, lines, emptyMessage, limit = 150) {
   if (!lines.length) return emptyMessage;
   const shown = lines.slice(0, limit);
@@ -74,10 +70,6 @@ function formatList(header, lines, emptyMessage, limit = 150) {
   return text;
 }
 
-// Every action the AI can take. destructive: true means it only runs if the
-// word "confirm" appears somewhere in the admin's original prompt.
-// silent: true means the result is fed back to the model but not shown to
-// the user in the final summary — for read-only lookups, not real actions.
 const toolDefs = [
   {
     name: 'list_channels',
@@ -415,11 +407,6 @@ const toolDefs = [
 const toolsByName = Object.fromEntries(toolDefs.map((t) => [t.name, t]));
 const tools = toolDefs.map((t) => t.schema);
 
-// sessionId ties memory to a place — pass interaction.channelId so each
-// channel's /setup conversation has its own thread of context.
-// requesterMember should be interaction.member from your slash command
-// handler. It's optional, but without it the admin-only check below is
-// skipped entirely — pass it if you want that check to actually do anything.
 async function runAiSetup(prompt, guild, sessionId, requesterMember) {
   if (requesterMember && !requesterMember.permissions.has(PermissionFlagsBits.Administrator)) {
     return "You need Administrator permission to use `/setup`.";
@@ -467,9 +454,6 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
 
       messages.push(message);
 
-      // Tool calls within a single round are independent of each other
-      // (the model already decided on all of them before seeing any
-      // results), so run them concurrently instead of one at a time.
       const callResults = await Promise.all(
         calls.map(async (call) => {
           const tool = toolsByName[call.function.name];
@@ -505,8 +489,6 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
         })
       );
 
-      // Push non-silent results in the model's original call order (not
-      // completion order, since Promise.all can finish them out of order).
       for (const { toolResultText, silent } of callResults) {
         if (!silent) results.push(toolResultText);
       }
@@ -544,3 +526,5 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
 }
 
 module.exports = { runAiSetup };
+ENDOFFILE
+echo "wrote $(wc -l < ai-tools.js) lines"
