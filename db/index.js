@@ -1,7 +1,7 @@
 // db/index.js
 // Connects to a Turso database (hosted SQLite over the network). Because
-// this bot runs on GitHub Actions and gets its filesystem wiped on every
-// restart, XP data needs to live somewhere off-box — Turso's free tier is
+// this bot's filesystem gets wiped on every restart/redeploy, XP and
+// economy data needs to live somewhere off-box — Turso's free tier is
 // perfect for this: no server to manage, plain SQL, tiny latency.
 //
 // Setup (one-time):
@@ -10,8 +10,7 @@
 //   3. turso db create leveling-bot
 //   4. turso db show leveling-bot --url          -> TURSO_DATABASE_URL
 //   5. turso db tokens create leveling-bot        -> TURSO_AUTH_TOKEN
-//   6. Add both to your local .env AND as GitHub Actions secrets
-//      (see the updated bot.yml)
+//   6. Add both to your local .env AND as Railway environment variables
 
 const { createClient } = require('@libsql/client');
 
@@ -37,6 +36,7 @@ const db = configured
 
 async function initDb() {
   if (!configured) return; // nothing to do — warning already logged above
+
   await db.execute(`
     CREATE TABLE IF NOT EXISTS levels (
       guild_id TEXT NOT NULL,
@@ -50,7 +50,7 @@ async function initDb() {
     )
   `);
 
-  // Currency + daily-game state for /blackjack, /wordle, /daily, /balance.
+  // Currency + daily-game state for /blackjack, /wordle, /daily, /balance, /rob.
   // Separate table from `levels` since it's a different concern (games,
   // not leveling) even though it's keyed the same way.
   await db.execute(`
@@ -59,9 +59,25 @@ async function initDb() {
       user_id TEXT NOT NULL,
       balance INTEGER NOT NULL DEFAULT 100,
       last_daily_at INTEGER NOT NULL DEFAULT 0,
+      last_rob_at INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (guild_id, user_id)
     )
   `);
+
+  // Migration: adds last_rob_at to the economy table if it was created
+  // before /rob existed. CREATE TABLE IF NOT EXISTS above only applies to
+  // brand-new databases, so existing ones need this explicit ALTER. The
+  // try/catch swallows the "duplicate column" error on every subsequent
+  // boot once the column already exists — cheap enough to just always run.
+  try {
+    await db.execute('ALTER TABLE economy ADD COLUMN last_rob_at INTEGER NOT NULL DEFAULT 0');
+    console.log('[db] Migrated: added last_rob_at to economy table.');
+  } catch (err) {
+    // Expected on every boot after the first migration — column already exists.
+    if (!/duplicate column/i.test(err.message)) {
+      console.error('[db] Unexpected error migrating last_rob_at:', err);
+    }
+  }
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS wordle_progress (
