@@ -1,3 +1,8 @@
+Here is the complete, updated file. I have put everything together for you and also fixed some missing backticks (```) in your original SQL queries so that the JavaScript won't throw syntax errors.
+
+Copy all of this and paste it into your `db/index.js` file, completely replacing the old content:
+
+```javascript
 // db/index.js
 // Connects to a Turso database (hosted SQLite over the network). Because
 // this bot's filesystem gets wiped on every restart/redeploy, XP and
@@ -11,7 +16,6 @@
 //   4. turso db show leveling-bot --url          -> TURSO_DATABASE_URL
 //   5. turso db tokens create leveling-bot        -> TURSO_AUTH_TOKEN
 //   6. Add both to your local .env AND as Railway environment variables
-
 const { createClient } = require('@libsql/client');
 
 const configured = Boolean(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
@@ -51,7 +55,7 @@ async function initDb() {
   `);
 
   // Currency + daily-game state for /blackjack, /wordle, /daily, /balance, /rob.
-  // Separate table from `levels` since it's a different concern (games,
+  // Separate table from levels since it's a different concern (games,
   // not leveling) even though it's keyed the same way.
   await db.execute(`
     CREATE TABLE IF NOT EXISTS economy (
@@ -79,6 +83,31 @@ async function initDb() {
     }
   }
 
+  // Bounty system (see utils/bounty.js). One row per guild+target holding
+  // the running total, plus a contributions table so multiple people can
+  // stack coins onto the same bounty and each be refunded individually if
+  // it expires unclaimed.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS bounties (
+      guild_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      total_amount INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      PRIMARY KEY (guild_id, target_id)
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS bounty_contributions (
+      guild_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      contributor_id TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
   await db.execute(`
     CREATE TABLE IF NOT EXISTS wordle_progress (
       guild_id TEXT NOT NULL,
@@ -96,3 +125,5 @@ async function initDb() {
 }
 
 module.exports = { db, initDb };
+
+```
