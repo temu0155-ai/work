@@ -11,15 +11,19 @@
  *     every message), you can skip the DB check entirely — see NOTE below.
  *
  * HOW TO WIRE IT IN:
- *   In whatever function currently detects "user just leveled up" (likely
- *   inside utils/xp.js, called from events/messageCreate.js), import this
- *   and call it right after you compute the new level:
+ * In your message/voice handler (wherever addMessageXp/addVoiceXp is
+ * called), after xp.js's applyXp() returns { leveledUp, oldLevel, level, xp }:
  *
  *     const { checkLevelRewards } = require('./levelRewards');
  *     ...
- *     if (newLevel > oldLevel) {
- *       await checkLevelRewards(message.member, newLevel, message.channel);
+ *     const result = await addMessageXp(guildId, userId);
+ *     if (result?.leveledUp) {
+ *       await checkLevelRewards(message.member, result.oldLevel, result.level, message.channel);
  *     }
+ *
+ * Handles multi-level jumps (e.g. a big voice XP chunk pushing someone from
+ * level 4 straight to 7) by checking every milestone in between, not just
+ * the final level.
  */
 
 const { addBalance } = require('./economy'); // adjust path/name if different
@@ -35,6 +39,48 @@ const LEVEL_REWARDS = {
   50: { role: 'Legend',       coins: 2500 },
 };
 
+async function checkLevelRewards(member, oldLevel, newLevel, announceChannel) {
+  // Check every level crossed, not just the final one — a big voice XP
+  // chunk can jump someone past several milestones in a single update.
+  for (let lvl = oldLevel + 1; lvl <= newLevel; lvl++) {
+    const reward = LEVEL_REWARDS[lvl];
+    if (!reward) continue;
+
+    const results = [];
+
+    // --- Role reward ---
+    if (reward.role) {
+      try {
+        const role = member.guild.roles.cache.find(r => r.name === reward.role);
+        if (role && !member.roles.cache.has(role.id)) {
+          await member.roles.add(role);
+          results.push(`the **${role.name}** role`);
+        }
+      } catch (err) {
+        console.error(`[levelRewards] Failed to assign role for level ${lvl}:`, err);
+      }
+    }
+
+    // --- Coin reward ---
+    if (reward.coins) {
+      try {
+        await addBalance(member.id, member.guild.id, reward.coins);
+        results.push(`**${reward.coins}** coins`);
+      } catch (err) {
+        console.error(`[levelRewards] Failed to add coins for level ${lvl}:`, err);
+      }
+    }
+
+    // --- Announce ---
+    if (results.length && announceChannel) {
+      announceChannel.send(
+        `🎉 ${member} just hit **Level ${lvl}** and earned ${results.join(' + ')}!`
+      ).catch(() => {});
+    }
+  }
+}
+
+module.exports = { checkLevelRewards, LEVEL_REWARDS };
 async function checkLevelRewards(member, newLevel, announceChannel) {
   const reward = LEVEL_REWARDS[newLevel];
   if (!reward) return; // no reward tier at this exact level
