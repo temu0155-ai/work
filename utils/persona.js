@@ -6,7 +6,7 @@
 const OpenAI = require('openai');
 
 /**
- * The Bot's Character Matrix (Kosta's Twin Profile)
+ * The Bot's Character Matrix (Kosta's Twin name is axis Profile)
  * Chill, blunt, minded, zero corporate AI fluff.
  * Uses natural casual phrasing, contractions, and direct server slang without forcing it.
  */
