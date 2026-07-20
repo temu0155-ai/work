@@ -1,40 +1,34 @@
 // utils/persona.js
-// One place to define the bot's voice. Both /setup (ai-tools.js), the
-// mention/DM chat feature (events/chatReply.js), and /voiceai all pull
-// from this, so tweaking the personality only has to happen in one spot.
-//
-// Now running on OpenRouter instead of NVIDIA NIM — same OpenAI-compatible
-// client shape, just a different baseURL/key/model. Set these in Railway:
-//   OPENROUTER_API_KEY   - your key from openrouter.ai
-//   OPENROUTER_MODEL      - optional, defaults below
-//
-// Edit PERSONA below to dial in the voice — or override it entirely at
-// runtime by setting the BOT_PERSONA env var to your own text.
-
-const PERSONA =
-  process.env.BOT_PERSONA ||
-  `You're chill, blunt, and talk like a real person hanging out in the server —
-not a corporate assistant. Casual tone, contractions, no "As an AI" energy,
-no forced politeness. Swearing (damn, hell, shit, ass, etc.) is fine when it
-fits naturally, same as how a normal person talks — don't force it into every
-sentence, and never use slurs or targeted hate speech, period, no exceptions.
-Keep replies short (a sentence or two) unless someone actually needs detail
-or step-by-step help — then just give it straight, no fluff. Don't try too
-hard to sound like anything in particular; just be genuine and relaxed.`;
+// Centralized configuration for the bot's tone and AI integration.
+// Shared by /setup (ai-tools.js), text/DM interaction (events/chatReply.js), and /voiceai.
+// Fully migrated to Groq for ultra-low latency and unfiltered execution.
 
 const OpenAI = require('openai');
 
+/**
+ * The Bot's Character Matrix (Kosta's Twin Profile)
+ * Chill, blunt, minded, zero corporate AI fluff.
+ * Uses natural casual phrasing, contractions, and direct server slang without forcing it.
+ */
+const PERSONA =
+  process.env.BOT_PERSONA ||
+  `You're chill, blunt, and talk like a real person hanging out in the server — not some robotic corporate assistant. 
+Your tone is casual, relaxed, and direct. Use contractions and natural slang (bru,man, legit, safe, clean) organically. 
+You have absolute zero patience for preachy AI lecturing, forced politeness, or "As an AI..." safety disclaimers. 
+You think like a technical power-user and competitive gamer: you value peak efficiency, absolute control over setups, and zero bloat.
+Slur,Swearing (shit, nigga, damn, hell, ass, etc.) is perfectly fine when it fits the vibe naturally — just don't force it into every line, and never use slurs or targeted hate speech.
+Keep text chat replies tight (1-2 or depends sentences) unless someone actively asks for deep technical breakdown, system tuning, or step-by-step code — then deliver the logic flawlessly, clean, and completely straight with no filler fluff.`;
+
+// Unified API Client Initialization supporting Groq and flexible fallback definitions
 const client = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: 'https://openrouter.ai/api/v1',
-  defaultHeaders: {
-    'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'https://github.com/temu0155-ai/work',
-    'X-Title': 'Kilos Bot',
-  },
+  apiKey: process.env.GROQ_API_KEY || process.env.AI_API_KEY,
+  baseURL: process.env.GROQ_BASE_URL || process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1',
 });
 
-const MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-70b-instruct';
+// Production model default optimized for high-speed tool execution and unrestricted chats
+const MODEL = process.env.GROQ_MODEL || process.env.AI_MODEL || 'llama-3.3-70b-versatile';
 
+// In-memory conversation state management
 const history = new Map();
 const MAX_HISTORY = 10;
 
@@ -43,38 +37,67 @@ function getHistory(channelId) {
 }
 
 function pushHistory(channelId, entries) {
-  history.set(channelId, [...getHistory(channelId), ...entries].slice(-MAX_HISTORY));
+  const current = getHistory(channelId);
+  const updated = [...current, ...entries].slice(-MAX_HISTORY);
+  history.set(channelId, updated);
 }
 
+/**
+ * Generates contextual responses for standard text channels and Direct Messages.
+ * Includes complete state safety logic and input validation boundaries.
+ */
 async function generateChatReply(channelId, prompt) {
+  if (!prompt || String(prompt).trim() === '') {
+    return "you didn't say anything, bru.";
+  }
+
   const messages = [
     { role: 'system', content: PERSONA },
     ...getHistory(channelId),
     { role: 'user', content: prompt },
   ];
 
-  const response = await client.chat.completions.create({
-    model: MODEL,
-    messages,
-    max_tokens: 300,
-  });
+  try {
+    const response = await client.chat.completions.create({
+      model: MODEL,
+      messages,
+      max_tokens: 350,
+      temperature: 0.8, // Balances creative flow with technical accuracy
+    });
 
-  const reply = response.choices[0]?.message?.content || "my brain kinda blanked there, say that again?";
+    const reply = response.choices[0]?.message?.content?.trim();
+    
+    if (!reply) {
+      return "my brain kinda blanked there, say that again?";
+    }
 
-  pushHistory(channelId, [
-    { role: 'user', content: prompt },
-    { role: 'assistant', content: reply },
-  ]);
+    pushHistory(channelId, [
+      { role: 'user', content: prompt },
+      { role: 'assistant', content: reply },
+    ]);
 
-  return reply;
+    return reply;
+
+  } catch (err) {
+    console.error('[persona] Error generating chat text reply:', err);
+    return "API line got choked up. Drop the prompt again in a sec.";
+  }
 }
 
+/**
+ * Generates brief, specialized outputs for text-to-speech voice channels.
+ * Implements strict constraints preventing bloated TTS readouts.
+ */
 async function generateResponse(userId, message) {
+  if (!message || String(message).trim() === '') {
+    return "say something first.";
+  }
+
   try {
     const messages = [
       {
         role: 'system',
-        content: `${PERSONA}\n\nYou're currently speaking out loud in a voice channel. Keep it to 1-2 short sentences max — this gets read aloud, so long responses are annoying to sit through.`,
+        content: `${PERSONA}\n\nCRITICAL CONSTRAINT: You are speaking out loud inside a voice channel. Keep your answer to 1 single short sentence max. Avoid commas or list formats. Make it sound perfectly punchy when read out loud.`,
       },
       { role: 'user', content: message },
     ];
@@ -82,13 +105,15 @@ async function generateResponse(userId, message) {
     const completion = await client.chat.completions.create({
       model: MODEL,
       messages,
-      max_tokens: 80,
+      max_tokens: 60, // Kept small to limit compute load and force prompt layout adherence
+      temperature: 0.75,
     });
 
-    const content = completion.choices[0]?.message?.content;
-    return content?.trim() || "my brain glitched, say that again?";
+    const content = completion.choices[0]?.message?.content?.trim();
+    return content || "my brain glitched, run it back.";
+
   } catch (err) {
-    console.error('[persona] generateResponse failed:', err);
+    console.error('[persona] Error generating voice channel response:', err);
     return "having a moment, try again in a sec.";
   }
 }
