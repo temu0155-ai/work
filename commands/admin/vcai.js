@@ -21,42 +21,51 @@ module.exports = {
 
         await interaction.deferReply();
         const prompt = interaction.options.getString('message');
+try {
+        // 1. Holt die AI-Antwort (inklusive funktionierender Konvo-Memory)
+        const aiTextReply = await generateResponse(interaction.user.id, prompt);
 
-        try {
-            // Get the voice-optimized short response from your twin persona
-            const aiTextReply = await generateResponse(interaction.user.id, prompt);
-
-            // Establish connection to the voice channel
-            const connection = joinVoiceChannel({
+        // 2. Verbindung stabil abgreifen oder neu aufbauen
+        let connection = getVoiceConnection(interaction.guildId);
+        if (!connection) {
+            connection = joinVoiceChannel({
                 channelId: voiceChannel.id,
                 guildId: interaction.guildId,
                 adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+                selfDeaf: false,
+                selfMute: false
             });
-
-            const player = createAudioPlayer();
-            
-            // Generate standard URL-encoded text-to-speech stream (English locale matching the persona)
-            const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(aiTextReply)}`;
-            const resource = createAudioResource(ttsUrl);
-
-            player.play(resource);
-            connection.subscribe(player);
-
-            // Edit the interaction reply so you can see what he's saying out loud
-            await interaction.editReply(`🗣️ **AI in VC:** "${aiTextReply}"`);
-
-            // Disconnect automatically once the bot finishes speaking to save resources
-            player.on(AudioPlayerStatus.Idle, () => {
-                setTimeout(() => {
-                    if (connection.state.status !== 'Destroyed') {
-                        connection.destroy();
-                    }
-                }, 5000); // Leaves 5 seconds of silence after talking before leaving
-            });
-
-        } catch (error) {
-            console.error('Error executing /vcai command:', error);
-            await interaction.editReply('⚠️ Failed to process VC audio. Check the bot terminal console.');
         }
-    },
+
+        // 3. Player im Speicher cachen, damit der Bot NIEMALS leavt
+        let player = guildPlayers.get(interaction.guildId);
+        if (!player) {
+            player = createAudioPlayer();
+            connection.subscribe(player);
+            guildPlayers.set(interaction.guildId, player);
+            
+            player.on('error', error => console.error('[Audio Error]:', error.message));
+        }
+
+        // 4. Audio direkt über die Groq-API streamen (Hannah Voice)
+        const speechResponse = await groq.audio.speech.create({
+            model: "canopylabs/orpheus-v1-english",
+            voice: "hannah", 
+            input: aiTextReply,
+            response_format: "wav"
+        });
+
+        const buffer = Buffer.from(await speechResponse.arrayBuffer());
+        const resource = createAudioResource(Readable.from(buffer), {
+            inputType: StreamType.Arbitrary
+        });
+
+        player.play(resource);
+        await interaction.editReply(`🗣️ **AI in VC:** "${aiTextReply}"`);
+
+    } catch (error) {
+        console.error('Error executing /vcai command:', error);
+        await interaction.editReply(`⚠️ Audio-Pipeline fehlgeschlagen: ${error.message}`);
+        }
+  },
 };
