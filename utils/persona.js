@@ -1,4 +1,3 @@
-// utils/persona.js
 // Centralized configuration for the bot's tone and AI integration.
 // Shared by /setup (ai-tools.js), text/DM interaction (events/chatReply.js), and /voiceai.
 // Fully migrated to Groq for ultra-low latency and unfiltered execution.
@@ -6,17 +5,17 @@
 const OpenAI = require('openai');
 
 /**
- * The Bot's Character Matrix (Kosta's Twin name is axis Profile)
+ * The Bot's Character Matrix (Kosta's Twin Profile)
  * Chill, blunt, minded, zero corporate AI fluff.
  * Uses natural casual phrasing, contractions, and direct server slang without forcing it.
  */
 const PERSONA =
   process.env.BOT_PERSONA ||
-  `You're chill, blunt, and talk like a real person hanging out in the server — not some robotic corporate assistant. 
-Your tone is casual, relaxed, and direct. Use contractions and natural slang (bru,man, legit, safe, clean) or any other bassically what black people say but not overusing it has to fit the convo organically. 
+  `You're chill, blunt, and talk like a real person (a girl and ur name is axis) hanging out in the server — not some robotic corporate assistant. 
+Your tone is casual, relaxed, and direct. Use contractions and natural slang (bru, man, legit, safe, clean) or any other basically what black people say but not overusing it has to fit the convo organically. 
 You have absolute zero patience for preachy AI lecturing sometimes, forced politeness, or "As an AI..." safety disclaimers. 
 You think like a technical power-user and competitive gamer: you value peak efficiency, absolute control over setups, and zero bloat.
-Slur,Swearing (shit, nigga, damn, hell, ass, etc.) is perfectly fine when it fits the vibe naturally — just don't force it into every line, and never use slurs or targeted hate speech.
+Slur,Swearing (shit, nigga, damn, hell, ass, etc). is perfectly fine when it fits the vibe naturally — just don't force it into every line, and never use slurs or targeted hate speech.
 Keep text chat replies tight (1-2 or depends sentences not always) unless someone actively asks for deep technical breakdown, system tuning, or step-by-step code — then deliver the logic flawlessly, clean, and completely straight with no filler fluff.`;
 
 // Unified API Client Initialization supporting Groq and flexible fallback definitions
@@ -44,7 +43,6 @@ function pushHistory(channelId, entries) {
 
 /**
  * Generates contextual responses for standard text channels and Direct Messages.
- * Includes complete state safety logic and input validation boundaries.
  */
 async function generateChatReply(channelId, prompt) {
   if (!prompt || String(prompt).trim() === '') {
@@ -62,7 +60,7 @@ async function generateChatReply(channelId, prompt) {
       model: MODEL,
       messages,
       max_tokens: 350,
-      temperature: 0.8, // Balances creative flow with technical accuracy
+      temperature: 0.8,
     });
 
     const reply = response.choices[0]?.message?.content?.trim();
@@ -86,7 +84,7 @@ async function generateChatReply(channelId, prompt) {
 
 /**
  * Generates brief, specialized outputs for text-to-speech voice channels.
- * Implements strict constraints preventing bloated TTS readouts.
+ * Now fully integrated with conversation history tracking!
  */
 async function generateResponse(userId, message) {
   if (!message || String(message).trim() === '') {
@@ -94,23 +92,36 @@ async function generateResponse(userId, message) {
   }
 
   try {
+    // Inject the current conversation history for this specific user into the voice prompt context
     const messages = [
       {
         role: 'system',
         content: `${PERSONA}\n\nCRITICAL CONSTRAINT: You are speaking out loud inside a voice channel. Keep your answer to 1 single short sentence max. Avoid commas or list formats. Make it sound perfectly punchy when read out loud.`,
       },
+      ...getHistory(userId), 
       { role: 'user', content: message },
     ];
 
     const completion = await client.chat.completions.create({
       model: MODEL,
       messages,
-      max_tokens: 60, // Kept small to limit compute load and force prompt layout adherence
+      max_tokens: 60, 
       temperature: 0.75,
     });
 
     const content = completion.choices[0]?.message?.content?.trim();
-    return content || "my brain glitched, run it back.";
+    
+    if (!content) {
+      return "my brain glitched, run it back.";
+    }
+
+    // Push the current back-and-forth exchange into memory so he remembers it next time
+    pushHistory(userId, [
+      { role: 'user', content: message },
+      { role: 'assistant', content: content }
+    ]);
+
+    return content;
 
   } catch (err) {
     console.error('[persona] Error generating voice channel response:', err);
