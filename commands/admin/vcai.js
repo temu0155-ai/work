@@ -1,6 +1,17 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { joinVoiceChannel, getVoiceConnection, createAudioPlayer, createAudioResource, StreamType } = require('@discordjs/voice');
 const { generateResponse } = require('../../utils/persona');
+const OpenAI = require('openai');
+const { Readable } = require('stream');
+
+// Initialisiere den Groq-Client für die Sprachausgabe
+const groq = new OpenAI({
+    baseURL: "https://api.groq.com/openai/v1",
+    apiKey: process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY,
+});
+
+// Cache für die AudioPlayer, damit der Bot im Channel bleibt
+const guildPlayers = new Map();
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -21,51 +32,52 @@ module.exports = {
 
         await interaction.deferReply();
         const prompt = interaction.options.getString('message');
-try {
-        // 1. Holt die AI-Antwort (inklusive funktionierender Konvo-Memory)
-        const aiTextReply = await generateResponse(interaction.user.id, prompt);
 
-        // 2. Verbindung stabil abgreifen oder neu aufbauen
-        let connection = getVoiceConnection(interaction.guildId);
-        if (!connection) {
-            connection = joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId: interaction.guildId,
-                adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-                selfDeaf: false,
-                selfMute: false
+        try {
+            // 1. Holt die AI-Antwort (inklusive funktionierender Konvo-Memory)
+            const aiTextReply = await generateResponse(interaction.user.id, prompt);
+
+            // 2. Verbindung stabil abgreifen oder neu aufbauen
+            let connection = getVoiceConnection(interaction.guildId);
+            if (!connection) {
+                connection = joinVoiceChannel({
+                    channelId: voiceChannel.id,
+                    guildId: interaction.guildId,
+                    adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+                    selfDeaf: false,
+                    selfMute: false
+                });
+            }
+
+            // 3. Player im Speicher cachen, damit der Bot NIEMALS leavt
+            let player = guildPlayers.get(interaction.guildId);
+            if (!player) {
+                player = createAudioPlayer();
+                connection.subscribe(player);
+                guildPlayers.set(interaction.guildId, player);
+                
+                player.on('error', error => console.error('[Audio Error]:', error.message));
+            }
+
+            // 4. Audio direkt über die Groq-API streamen (Hannah Voice)
+            const speechResponse = await groq.audio.speech.create({
+                model: "canopylabs/orpheus-v1-english",
+                voice: "hannah", 
+                input: aiTextReply,
+                response_format: "wav"
             });
+
+            const buffer = Buffer.from(await speechResponse.arrayBuffer());
+            const resource = createAudioResource(Readable.from(buffer), {
+                inputType: StreamType.Arbitrary
+            });
+
+            player.play(resource);
+            await interaction.editReply(`🗣️ **AI in VC:** "${aiTextReply}"`);
+
+        } catch (error) {
+            console.error('Error executing /vcai command:', error);
+            await interaction.editReply(`⚠️ Audio-Pipeline fehlgeschlagen: ${error.message}`);
         }
-
-        // 3. Player im Speicher cachen, damit der Bot NIEMALS leavt
-        let player = guildPlayers.get(interaction.guildId);
-        if (!player) {
-            player = createAudioPlayer();
-            connection.subscribe(player);
-            guildPlayers.set(interaction.guildId, player);
-            
-            player.on('error', error => console.error('[Audio Error]:', error.message));
-        }
-
-        // 4. Audio direkt über die Groq-API streamen (Hannah Voice)
-        const speechResponse = await groq.audio.speech.create({
-            model: "canopylabs/orpheus-v1-english",
-            voice: "hannah", 
-            input: aiTextReply,
-            response_format: "wav"
-        });
-
-        const buffer = Buffer.from(await speechResponse.arrayBuffer());
-        const resource = createAudioResource(Readable.from(buffer), {
-            inputType: StreamType.Arbitrary
-        });
-
-        player.play(resource);
-        await interaction.editReply(`🗣️ **AI in VC:** "${aiTextReply}"`);
-
-    } catch (error) {
-        console.error('Error executing /vcai command:', error);
-        await interaction.editReply(`⚠️ Audio-Pipeline fehlgeschlagen: ${error.message}`);
-        }
-  },
+    },
 };
