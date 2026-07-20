@@ -1,23 +1,18 @@
 // ai-tools.js
-// Discord AI setup assistant — powered by OpenRouter (same provider as
-// utils/persona.js, one API key for both).
-// Model: set via OPENROUTER_MODEL env var (shared with persona.js), defaults
-// to meta-llama/llama-3.1-70b-instruct, which supports tool/function calling.
+// Discord AI setup assistant — powered by Groq.
+// Model: set via GROQ_MODEL env var, defaults to llama-3.3-70b-versatile,
+// which supports tool/function calling.
 
 const OpenAI = require('openai');
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
 const { PERSONA } = require('./utils/persona');
 
 const client = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: 'https://openrouter.ai/api/v1',
-  defaultHeaders: {
-    'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'https://github.com/temu0155-ai/work',
-    'X-Title': 'Kilos Bot',
-  },
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: 'https://api.groq.com/openai/v1',
 });
 
-const MODEL = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.1-70b-instruct';
+const MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
 const conversationHistory = new Map();
 const MAX_HISTORY_MESSAGES = 12;
@@ -525,4 +520,3 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
 }
 
 module.exports = { runAiSetup };
-
