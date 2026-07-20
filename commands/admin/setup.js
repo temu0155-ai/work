@@ -23,7 +23,7 @@ module.exports = {
     }
 
     try {
-      console.log(`[SETUP] Calling NVIDIA AI API...`);
+      console.log(`[SETUP] Calling Groq AI API...`);
       const result = await runAiSetup(prompt, interaction.guild, interaction.channelId, interaction.member);
       console.log(`[SETUP] Success! Result:`, result.substring(0, 100) + '...');
       await interaction.editReply(result);
