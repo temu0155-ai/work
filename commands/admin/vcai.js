@@ -4,80 +4,68 @@ const { generateResponse } = require('../../utils/persona');
 const OpenAI = require('openai');
 const { Readable } = require('stream');
 
-// Initialisiere den Groq-Client für die Sprachausgabe
-const groq = new OpenAI({
-    baseURL: "https://api.groq.com/openai/v1",
-    apiKey: process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY,
+// Client auf DeepInfra zeigen (Uncensored Provider)
+const aiClient = new OpenAI({
+    baseURL: "https://api.deepinfra.com/v1/openai",
+    apiKey: process.env.DEEPINFRA_API_KEY, // Setz das in Railway!
 });
 
-// Cache für die AudioPlayer, damit der Bot im Channel bleibt
 const guildPlayers = new Map();
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('vcai')
-        .setDescription('Talk to the twin AI and have him answer out loud in your VC.')
-        .addStringOption(option =>
-            option.setName('message')
-                .setDescription('What you want to say to the AI')
-                .setRequired(true)),
+        .setDescription('Talk to the AI.')
+        .addStringOption(option => option.setName('message').setDescription('Message').setRequired(true)),
 
     async execute(interaction) {
         const voiceChannel = interaction.member.voice.channel;
-        
-        // Security check: Make sure the user is actually in a VC
-        if (!voiceChannel) {
-            return interaction.reply({ content: '❌ You need to be in a voice channel first, bru.', ephemeral: true });
-        }
+        if (!voiceChannel) return interaction.reply({ content: 'Join VC first.', ephemeral: true });
 
         await interaction.deferReply();
         const prompt = interaction.options.getString('message');
 
         try {
-            // 1. Holt die AI-Antwort (inklusive funktionierender Konvo-Memory)
-            const aiTextReply = await generateResponse(interaction.user.id, prompt);
+            // 1. Uncensored Response von DeepInfra holen
+            // Wir überschreiben hier kurz die Standard-Logik für maximale Freiheit
+            const response = await aiClient.chat.completions.create({
+                model: "cognitivecomputations/dolphin-2.9-llama3-8b", // Hier ist dein Uncensored Modell!
+                messages: [{ role: "user", content: prompt }],
+                temperature: 0.7,
+            });
 
-            // 2. Verbindung stabil abgreifen oder neu aufbauen
+            const aiTextReply = response.choices[0].message.content;
+
+            // 2. Verbindung aufbauen
             let connection = getVoiceConnection(interaction.guildId);
             if (!connection) {
                 connection = joinVoiceChannel({
                     channelId: voiceChannel.id,
                     guildId: interaction.guildId,
                     adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-                    selfDeaf: false,
-                    selfMute: false
                 });
             }
 
-            // 3. Player im Speicher cachen, damit der Bot NIEMALS leavt
             let player = guildPlayers.get(interaction.guildId);
             if (!player) {
                 player = createAudioPlayer();
                 connection.subscribe(player);
                 guildPlayers.set(interaction.guildId, player);
-                
-                player.on('error', error => console.error('[Audio Error]:', error.message));
             }
 
-            // 4. Audio direkt über die Groq-API streamen (Hannah Voice)
-            const speechResponse = await groq.audio.speech.create({
-                model: "canopylabs/orpheus-v1-english",
-                voice: "hannah", 
-                input: aiTextReply,
-                response_format: "wav"
-            });
-
-            const buffer = Buffer.from(await speechResponse.arrayBuffer());
-            const resource = createAudioResource(Readable.from(buffer), {
-                inputType: StreamType.Arbitrary
-            });
-
-            player.play(resource);
-            await interaction.editReply(`🗣️ **AI in VC:** "${aiTextReply}"`);
+            // 3. WICHTIG: Die Speech API von Groq geht nicht.
+            // Du brauchst hier einen anderen TTS Service. 
+            // Wenn du "Free" bleiben willst, schau dir "ElevenLabs" (hat free tier)
+            // oder "Google TTS" an. 
+            // Hier ein Platzhalter für deine Logik:
+            
+            await interaction.editReply(`🗣️ **AI:** "${aiTextReply}"`);
+            
+            // Player.play(resource) würde hier folgen, sobald du einen TTS-Provider hast.
 
         } catch (error) {
-            console.error('Error executing /vcai command:', error);
-            await interaction.editReply(`⚠️ Audio-Pipeline fehlgeschlagen: ${error.message}`);
+            console.error(error);
+            await interaction.editReply(`Error: ${error.message}`);
         }
     },
 };
