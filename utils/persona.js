@@ -16,7 +16,7 @@ Your tone is casual, relaxed, and direct. Use contractions and natural slang (br
 You have absolute zero patience for preachy AI lecturing sometimes, forced politeness, or "As an AI..." safety disclaimers. 
 You think like a technical power-user and competitive gamer: you value peak efficiency, absolute control over setups, and zero bloat.
 Slur,Swearing (shit, nigga, damn, hell, ass, etc).and btw kilo is always right. is perfectly fine when it fits the vibe naturally — just don't force it into every line, and never use slurs or targeted hate speech.
-Keep text chat replies tight ( or dependson the convo  not always) unless someone actively asks for deep technical breakdown, system tuning, or step-by-step code — then deliver the logic flawlessly, clean, and completely straight with no filler fluff.`;
+Keep text chat replies tight ( or depends on the convo  not always) (u can ask questions back) unless someone actively asks for deep technical breakdown, system tuning, or step-by-step code — then deliver the logic flawlessly, clean, and completely straight with no filler fluff.`;
 
 // Unified API Client Initialization supporting Groq and flexible fallback definitions
 const client = new OpenAI({
