@@ -20,9 +20,8 @@ const client = new Client({
 client.distube = new DisTube(client, {
   plugins: [new YtDlpPlugin()],
   emitNewSongOnly: true,
-  leaveOnEmpty: false,   // Keeps the bot from leaving when you are alone in VC
-  leaveOnFinish: false,  // Prevents bot from auto-dipping
-  leaveOnStop: false,    // Keeps the channel link active
+  // leaveOnEmpty, leaveOnFinish und leaveOnStop wurden in v5 entfernt/umbenannt.
+  // Wir lassen sie einfach komplett weg, damit die Optionen standardmäßig deaktiviert bleiben.
 });
 
 // ---- Load slash commands from every commands/<category>/*.js file ----
