@@ -6,9 +6,17 @@ const {
 const { generateResponse } = require('../../utils/persona');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
-// Fallback voice in case TTS fails
-const FALLBACK_VOICE = "en-US-AriaNeural";
-const tts = new MsEdgeTTS();
+   // Fallback voice
+   const VOICE = process.env.TTS_VOICE || 'en-US-AriaNeural';
+
+   // Text-to-speech (pure JS, no external calls)
+   const say = require('say.js');
+   function getTTS() {
+     // No init needed — it's self-contained
+   }
+   function ttsToStream(text) {
+     return say.speak(text, VOICE);
+   }
 
 // 100% reliable error-to-string converter (handles literally anything)
 function safeError(e) {
