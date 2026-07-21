@@ -269,9 +269,13 @@ const toolsByName = Object.fromEntries(toolDefs.map((t) => [t.name, t]));
 function buildToolCatalog() {
   return toolDefs.map((t) => {
     const fn = t.schema.function;
-    const props = JSON.stringify(fn.parameters.properties || {});
-    const req = fn.parameters.required?.length ? ` (required: ${fn.parameters.required.join(', ')})` : '';
-    return `- ${fn.name}: ${fn.description}\n  params: ${props}${req}`;
+    const props = fn.parameters.properties || {};
+    const req = fn.parameters.required || [];
+    const params = Object.entries(props)
+      .map(([name, def]) => name + (req.includes(name) ? '*' : '') + (def.enum ? `[${def.enum.join('|')}]` : ''))
+      .join(', ');
+    const desc = (fn.description || '').split('.')[0].slice(0, 70);
+    return `- ${fn.name}(${params}): ${desc}`;
   }).join('\n');
 }
 
