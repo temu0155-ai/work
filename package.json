@@ -11,11 +11,14 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@discordjs/voice": "^0.19.2",
     "@distube/yt-dlp": "^2.0.1",
     "@libsql/client": "^0.14.0",
     "discord.js": "^14.26.5",
     "distube": "^5.2.3",
     "dotenv": "^17.4.2",
-    "openai": "^6.46.0"
+    "msedge-tts": "^2.0.7",
+    "openai": "^6.46.0",
+    "opusscript": "^0.0.8"
   }
 }
