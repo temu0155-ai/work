@@ -8,7 +8,7 @@ const { PermissionFlagsBits, ChannelType } = require('discord.js');
 const { PERSONA } = require('./utils/persona');
 
 const client = new OpenAI({
-  apiKey: process.env.AI_HORDE_API_KEY || '0000000000',
+  apiKey: process.env.GROQ_API_KEY || '0000000000',
   baseURL: 'https://oai.aihorde.net/v1',
   defaultHeaders: {
     'Client-Agent': 'KiloBot:1.0.0:discord-bot',
