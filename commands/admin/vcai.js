@@ -1,4 +1,4 @@
-cconst { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { joinVoiceChannel, getVoiceConnection, createAudioPlayer, createAudioResource, StreamType } = require('@discordjs/voice');
 const { generateResponse } = require('../../utils/persona');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
