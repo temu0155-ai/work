@@ -1,24 +1,25 @@
 // ai-tools.js
-// Discord AI setup assistant — powered by Groq.
-// Model: set via GROQ_MODEL env var, defaults to llama-3.3-70b-versatile,
-// which supports tool/function calling.
+// Discord AI setup assistant — powered by AI Horde.
+// Model: set via AI_MODEL env var, defaults to Hermes-2-Pro-Llama-3-8B,
+// which natively supports tool/function calling on the proxy.
 
 const OpenAI = require('openai');
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
 const { PERSONA } = require('./utils/persona');
 
 const client = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY || '0000000000',
+  apiKey: process.env.AI_HORDE_API_KEY || '0000000000',
   baseURL: 'https://oai.aihorde.net/v1',
   defaultHeaders: {
     'Client-Agent': 'KiloBot:1.0.0:discord-bot',
     'HTTP-Referer': 'https://github.com/discordjs',
     'Accept': 'application/json',
+    'Content-Type': 'application/json',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) KiloBot/1.0.0',
   },
 });
 
-const MODEL = process.env.AI_MODEL || 'cognitivecomputations/Dolphin-2.6-Mistral-7B';
+const MODEL = process.env.AI_MODEL || 'NousResearch/Hermes-2-Pro-Llama-3-8B';
 
 const conversationHistory = new Map();
 const MAX_HISTORY_MESSAGES = 12;
@@ -435,13 +436,22 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const response = await client.chat.completions.create({
+      
+      // Conditionally attach tools only if the user is asking for server modifications
+      const needsTools = /setup|create|delete|channel|role|category|kick|ban|permission/i.test(prompt);
+      
+      const payload = {
         model: MODEL,
         messages,
-        tools,
-        tool_choice: 'auto',
         max_tokens: 700,
-      });
+      };
+
+      if (needsTools) {
+        payload.tools = tools;
+        payload.tool_choice = 'auto';
+      }
+
+      const response = await client.chat.completions.create(payload);
 
       const message = response.choices[0].message;
       const calls = message.tool_calls || [];
