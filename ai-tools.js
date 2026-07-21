@@ -488,17 +488,17 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
         })
       );
 
-      for (const { id, name, toolResultText } of callResults) {
-  messages.push({
-    role: 'tool',
-    tool_call_id: id,
-    name: name,
-    content: String(toolResultText),
-  });
-}
+  for (const { toolResultText, silent } of callResults) {
+        if (!silent) results.push(toolResultText);
+      }
 
-      for (const { id, toolResultText } of callResults) {
-        messages.push({ role: 'tool', tool_call_id: id, content: toolResultText });
+      for (const { id, name, toolResultText } of callResults) {
+        messages.push({
+          role: 'tool',
+          tool_call_id: id,
+          name: name,
+          content: String(toolResultText),
+        });
       }
     }
   } catch (err) {
