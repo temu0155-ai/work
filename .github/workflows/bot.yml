@@ -25,9 +25,13 @@ jobs:
       - name: Create .env file
         run: |
           echo "DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}" >> .env
-          echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" >> .env
           echo "CLIENT_ID=${{ secrets.CLIENT_ID }}" >> .env
           echo "GUILD_ID=${{ secrets.GUILD_ID }}" >> .env
+          echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY || 'ci-dummy' }}" >> .env
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY || secrets.GROQ_API_KEY || 'ci-dummy' }}" >> .env
+          echo "AI_API_KEY=${{ secrets.AI_API_KEY || secrets.GROQ_API_KEY || 'ci-dummy' }}" >> .env
+          echo "HORDE_API_KEY=${{ secrets.HORDE_API_KEY || '0000000000' }}" >> .env
+          echo "HORDE_MODEL=${{ secrets.HORDE_MODEL }}" >> .env
           echo "TURSO_DATABASE_URL=${{ secrets.TURSO_DATABASE_URL }}" >> .env
           echo "TURSO_AUTH_TOKEN=${{ secrets.TURSO_AUTH_TOKEN }}" >> .env
 
