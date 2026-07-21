@@ -1,7 +1,7 @@
 // events/chatReply.js
 // Replies with an AI-generated response when someone @mentions the bot or DMs it.
 const { Events } = require('discord.js');
-const reply = await generateChatReply(message.channelId, prompt, message.author.displayName, message.author.id);
+const { generateChatReply } = require('../utils/persona');
 
 module.exports = {
   name: Events.MessageCreate,
@@ -18,7 +18,7 @@ module.exports = {
 
     try {
       await message.channel.sendTyping().catch(() => {});
-      const reply = await generateChatReply(message.channelId, prompt);
+      const reply = await generateChatReply(message.channelId, prompt, message.author.displayName, message.author.id);
       await message.reply(reply);
     } catch (err) {
       console.error('[chatReply] Failed to generate/send reply:', err);
