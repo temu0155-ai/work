@@ -1,6 +1,8 @@
 // Centralized configuration for the bot's tone and AI integration.
 // Shared by /setup (ai-tools.js), text/DM interaction (events/chatReply.js), and /voiceai.
-// Fully migrated to Groq for ultra-low latency and unfiltered execution.
+// Hybrid brain: /setup runs on AI Horde (ai-tools.js); text chat + voice run on Groq
+// here (fast/low-latency, which live chat needs). The Groq client is only built when a
+// key exists, so requiring this file in CI (deploy-commands, DISCORD_TOKEN only) never crashes.
 
 const OpenAI = require('openai');
 
@@ -18,11 +20,16 @@ You think like a technical power-user and competitive gamer: you value peak effi
 Slur,Swearing (shit, nigga, damn, hell, ass, etc).and btw kilo is always right. is perfectly fine when it fits the vibe naturally — just don't force it into every line, and never use slurs or targeted hate speech.
 Keep text chat replies tight ( or depends on the convo  not always) (u can ask questions back) unless someone actively asks for deep technical breakdown, system tuning, or step-by-step code — then deliver the logic flawlessly, clean, and completely straight with no filler fluff.`;
 
-// Unified API Client Initialization supporting Groq and flexible fallback definitions
-const client = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY || process.env.AI_API_KEY,
-  baseURL: process.env.GROQ_BASE_URL || process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1',
-});
+// Only build the Groq client when a key is actually present. With no key (e.g. CI),
+// client stays null and the chat/voice functions return a friendly offline line
+// instead of crashing the whole process at load time.
+const GROQ_KEY = process.env.GROQ_API_KEY || process.env.AI_API_KEY || process.env.OPENAI_API_KEY;
+const client = GROQ_KEY
+  ? new OpenAI({
+      apiKey: GROQ_KEY,
+      baseURL: process.env.GROQ_BASE_URL || process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1',
+    })
+  : null;
 
 // Production model default optimized for high-speed tool execution and unrestricted chats
 const MODEL = process.env.GROQ_MODEL || process.env.AI_MODEL || 'llama-3.3-70b-versatile';
@@ -47,6 +54,11 @@ function pushHistory(channelId, entries) {
 async function generateChatReply(channelId, prompt) {
   if (!prompt || String(prompt).trim() === '') {
     return "you didn't say anything, bru.";
+  }
+
+  if (!client) {
+    console.warn('[persona] no Groq/OpenAI key set — text chat disabled');
+    return "my chat brain's offline rn (no API key set).";
   }
 
   const messages = [
@@ -89,6 +101,11 @@ async function generateChatReply(channelId, prompt) {
 async function generateResponse(userId, message) {
   if (!message || String(message).trim() === '') {
     return "say something first.";
+  }
+
+  if (!client) {
+    console.warn('[persona] no Groq/OpenAI key set — voice disabled');
+    return "voice brain's offline rn.";
   }
 
   try {
