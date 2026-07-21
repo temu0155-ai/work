@@ -7,10 +7,14 @@ const OpenAI = require('openai');
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
 const { PERSONA } = require('./utils/persona');
 
-// AFTER (AI Horde)
 const client = new OpenAI({
-  apiKey: process.env.AI_HORDE_API_KEY || '0000000000', // Uses your key or default guest key
+  apiKey: process.env.AI_HORDE_API_KEY || '0000000000',
   baseURL: 'https://oai.aihorde.net/v1',
+  defaultHeaders: {
+    // AI Horde requires this header to identify your app
+    'Client-Agent': 'KiloBot:1.0.0:discord-bot',
+    'HTTP-Referer': 'https://github.com/discordjs',
+  },
 });
 
 const MODEL = process.env.AI_MODEL || 'cognitivecomputations/Dolphin-2.6-Mistral-7B';
@@ -457,7 +461,7 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
           if (!tool) {
             toolResultText = `Unknown tool "${call.function.name}"`;
           } else {
-            const args = JSON.parse(call.function.arguments);
+            let args = {}; try {   args = JSON.parse(call.function.arguments || '{}'); } catch (e) {   toolResultText = `Invalid tool arguments format.`; }
 
             if (tool.destructive && !userConfirmed) {
               const label = `${call.function.name.replace(/_/g, ' ')}: ${args.channelName || args.roleName || args.memberName}`;
@@ -480,13 +484,18 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
             }
           }
 
-          return { id: call.id, toolResultText, silent: tool?.silent };
+          return { id: call.id, name: call.function.name, toolResultText, silent: tool?.silent };
         })
       );
 
-      for (const { toolResultText, silent } of callResults) {
-        if (!silent) results.push(toolResultText);
-      }
+      for (const { id, name, toolResultText } of callResults) {
+  messages.push({
+    role: 'tool',
+    tool_call_id: id,
+    name: name,
+    content: String(toolResultText),
+  });
+}
 
       for (const { id, toolResultText } of callResults) {
         messages.push({ role: 'tool', tool_call_id: id, content: toolResultText });
