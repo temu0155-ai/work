@@ -34,6 +34,8 @@ jobs:
           echo "HORDE_MODEL=${{ secrets.HORDE_MODEL }}" >> .env
           echo "TURSO_DATABASE_URL=${{ secrets.TURSO_DATABASE_URL }}" >> .env
           echo "TURSO_AUTH_TOKEN=${{ secrets.TURSO_AUTH_TOKEN }}" >> .env
+          echo "HORDE_MAX_CONTEXT=2048" >> .env
+          echo "HORDE_MAX_LENGTH=256" >> .env
 
       # Registers /wordle, /setup, and your other commands with Discord's API
       - name: Register Slash Commands
