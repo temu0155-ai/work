@@ -4,17 +4,33 @@ const {
   StreamType, VoiceConnectionStatus, entersState,
 } = require('@discordjs/voice');
 const { generateResponse } = require('../../utils/persona');
-const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 const AXIS_VOICE = process.env.TTS_VOICE || 'en-US-AriaNeural';
-const tts = new MsEdgeTTS();
-let ttsReady = null;
-function getTTS() {
-  if (!ttsReady) ttsReady = tts.setMetadata(AXIS_VOICE, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-  return ttsReady;
-}
-
 const guildPlayers = new Map();
+
+// Generate speech audio file using edge-tts CLI (way more reliable than JS wrappers)
+function speak(text, voice) {
+  return new Promise((resolve, reject) => {
+    const outFile = path.join(os.tmpdir(), `axis-${Date.now()}.mp3`);
+    const proc = spawn('edge-tts', ['--voice', voice, '--text', text, '--write-media', outFile]);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`edge-tts exit ${code}: ${stderr.slice(0, 300)}`));
+      } else if (!fs.existsSync(outFile)) {
+        reject(new Error('edge-tts produced no output file'));
+      } else {
+        resolve(outFile);
+      }
+    });
+    proc.on('error', (err) => reject(new Error(`edge-tts not found: ${err.message}`)));
+  });
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -30,13 +46,18 @@ module.exports = {
 
     await interaction.deferReply();
     const prompt = interaction.options.getString('message');
+    let aiTextReply = '';
+    let audioFile = '';
 
     try {
-      // axis thinks (Horde + persona + gf dynamic), short punchy voice line
-      const aiTextReply = await generateResponse(interaction.user.id, prompt, interaction.member.displayName);
+      // 1. axis thinks
+      aiTextReply = await generateResponse(interaction.user.id, prompt, interaction.member.displayName);
       await interaction.editReply(`🗣️ **axis:** "${aiTextReply}"`);
 
-      // join (or reuse) the voice connection
+      // 2. generate speech audio file
+      audioFile = await speak(aiTextReply, AXIS_VOICE);
+
+      // 3. join VC
       let connection = getVoiceConnection(interaction.guildId);
       if (!connection) {
         connection = joinVoiceChannel({
@@ -44,20 +65,10 @@ module.exports = {
           guildId: interaction.guildId,
           adapterCreator: voiceChannel.guild.voiceAdapterCreator,
         });
-        // log the REAL reason if the connection dies
-        connection.on('error', (err) =>
-          console.error('[vcai] voice connection error:', err?.message || JSON.stringify(err))
-        );
       }
+      await entersState(connection, VoiceConnectionStatus.Ready, 15000);
 
-      // wait until the connection is actually Ready (surfaces the real failure if it can't connect)
-      try {
-        await entersState(connection, VoiceConnectionStatus.Ready, 15000);
-      } catch (e) {
-        console.error('[vcai] connection never became Ready:', e?.message || JSON.stringify(e));
-        return interaction.followUp("couldn't join VC — check the Railway logs for the real reason.").catch(() => {});
-      }
-
+      // 4. play it
       let player = guildPlayers.get(interaction.guildId);
       if (!player) {
         player = createAudioPlayer();
@@ -65,15 +76,22 @@ module.exports = {
         guildPlayers.set(interaction.guildId, player);
       }
 
-      // text -> speech -> play in VC
-      await getTTS();
-      const audioStream = tts.toStream(aiTextReply);
-      const resource = createAudioResource(audioStream, { inputType: StreamType.Arbitrary });
+      const resource = createAudioResource(audioFile, { inputType: StreamType.Arbitrary });
       player.play(resource);
 
+      // 5. clean up temp file after it finishes playing
+      player.once('stateChange', (_, newState) => {
+        if (newState.status === 'idle' && audioFile) {
+          try { fs.unlinkSync(audioFile); } catch {}
+        }
+      });
+
     } catch (error) {
-      console.error('[vcai] execute error:', error?.message || error);
-      await interaction.editReply(`voice brain hiccup: ${error?.message || error}`).catch(() => {});
+      const detail = error?.message || String(error);
+      console.error('[vcai] error:', detail);
+      const text = aiTextReply ? `🗣️ **axis:** "${aiTextReply}"\n\n` : '';
+      await interaction.editReply(`${text}⚠️ voice hiccup: ${detail}`).catch(() => {});
+      if (audioFile) try { fs.unlinkSync(audioFile); } catch {}
     }
   },
 };
