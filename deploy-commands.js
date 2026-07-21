@@ -4,6 +4,16 @@
 // Usage: node deploy-commands.js
 
 require('dotenv').config();
+
+// Some command files (vcAI, vczap, etc.) build an OpenAI/Groq client at load time,
+// which throws if no API key is present. This script only REGISTERS commands — it
+// never calls the AI — so we fill in a dummy key for any that are missing. This lets
+// every command file load in CI (where only DISCORD_TOKEN is set) and locally without
+// a real key. Any key that's already set for real is left untouched.
+if (!process.env.GROQ_API_KEY) process.env.GROQ_API_KEY = 'ci-dummy';
+if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = 'ci-dummy';
+if (!process.env.AI_API_KEY) process.env.AI_API_KEY = 'ci-dummy';
+
 const { REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
