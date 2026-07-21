@@ -42,5 +42,7 @@ jobs:
       - name: Register Slash Commands
         run: node deploy-commands.js
 
-      - name: Run Discord Bot
-        run: node index.js
+      # Bot now runs 24/7 on Railway — NOT here. (Actions would die after 6h anyway,
+      # and running it in both places = two bots = double replies.)
+      # - name: Run Discord Bot
+      #   run: node index.js
