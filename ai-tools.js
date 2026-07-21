@@ -7,12 +7,13 @@ const OpenAI = require('openai');
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
 const { PERSONA } = require('./utils/persona');
 
+// AFTER (AI Horde)
 const client = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY,
-  baseURL: 'https://api.groq.com/openai/v1',
+  apiKey: process.env.AI_HORDE_API_KEY || '0000000000', // Uses your key or default guest key
+  baseURL: 'https://oai.aihorde.net/v1',
 });
 
-const MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const MODEL = process.env.AI_MODEL || 'cognitivecomputations/Dolphin-2.6-Mistral-7B';
 
 const conversationHistory = new Map();
 const MAX_HISTORY_MESSAGES = 12;
