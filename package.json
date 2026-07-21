@@ -17,7 +17,7 @@
     "discord.js": "^14.26.5",
     "distube": "^5.2.3",
     "dotenv": "^17.4.2",
-    "msedge-tts": "^1.0.0",
+    "say.js": "^1.0.0",
     "openai": "^6.46.0"
   }
 }
