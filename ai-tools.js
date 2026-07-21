@@ -11,9 +11,10 @@ const client = new OpenAI({
   apiKey: process.env.AI_HORDE_API_KEY || '0000000000',
   baseURL: 'https://oai.aihorde.net/v1',
   defaultHeaders: {
-    // AI Horde requires this header to identify your app
     'Client-Agent': 'KiloBot:1.0.0:discord-bot',
     'HTTP-Referer': 'https://github.com/discordjs',
+    'Accept': 'application/json',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) KiloBot/1.0.0',
   },
 });
 
