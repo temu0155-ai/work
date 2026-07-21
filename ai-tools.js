@@ -8,7 +8,7 @@ const { PERSONA } = require('./utils/persona');
 
 // ---- Horde config (all optional via env) ----
 const HORDE_BASE = 'https://stablehorde.net/api/v2';
-const HORDE_API_KEY = process.env.HORDE_API_KEY || '_3yoqnqv3UOLBaJQxE-_Jg'; // 10 zeros = anonymous [[18]]
+const HORDE_API_KEY = process.env.HORDE_API_KEY || '0000000000'; // 10 zeros = anonymous [[18]]
 const HORDE_MODEL = process.env.HORDE_MODEL || '';              // '' = any available worker
 const HORDE_MAX_LENGTH = parseInt(process.env.HORDE_MAX_LENGTH || '400', 10);
 const HORDE_MAX_CONTEXT = parseInt(process.env.HORDE_MAX_CONTEXT || '4096', 10);
@@ -447,24 +447,4 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
   return summary;
 }
 
-module.exports = { runAiSetup };      throw new Error('Generation faulted on AI Horde\'s end — try again.');
-    }
-
-    if (status.done) {
-      const result = await fetchResult(jobId);
-      if (!result.generations || result.generations.length === 0) {
-        throw new Error('AI Horde returned no images.');
-      }
-      return result.generations.map((g) => ({
-        url: g.img,
-        seed: g.seed,
-        model: g.model,
-        worker: g.worker_name,
-      }));
-    }
-  }
-
-  throw new Error('Timed out waiting for AI Horde to finish generating.');
-}
-
-module.exports = { generateImage, submitImageRequest, checkStatus, fetchResult };
+module.exports = { runAiSetup };
