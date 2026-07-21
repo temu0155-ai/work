@@ -1,10 +1,11 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { joinVoiceChannel, getVoiceConnection, createAudioPlayer, createAudioResource, StreamType } = require('@discordjs/voice');
+const {
+  joinVoiceChannel, getVoiceConnection, createAudioPlayer, createAudioResource,
+  StreamType, VoiceConnectionStatus, entersState,
+} = require('@discordjs/voice');
 const { generateResponse } = require('../../utils/persona');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
-// ---- axis's voice: free Microsoft Edge neural TTS, no API key needed ----
-// Other good female voices: en-US-JennyNeural, en-US-AnaNeural, en-GB-SoniaNeural, en-US-AvaNeural
 const AXIS_VOICE = process.env.TTS_VOICE || 'en-US-AriaNeural';
 const tts = new MsEdgeTTS();
 let ttsReady = null;
@@ -31,13 +32,11 @@ module.exports = {
     const prompt = interaction.options.getString('message');
 
     try {
-      // 1. axis thinks — AI Horde + persona + gf dynamic (soft for kilo), short punchy voice line
+      // axis thinks (Horde + persona + gf dynamic), short punchy voice line
       const aiTextReply = await generateResponse(interaction.user.id, prompt, interaction.member.displayName);
-
-      // show what she said in chat too
       await interaction.editReply(`🗣️ **axis:** "${aiTextReply}"`);
 
-      // 2. join (or reuse) the voice connection
+      // join (or reuse) the voice connection
       let connection = getVoiceConnection(interaction.guildId);
       if (!connection) {
         connection = joinVoiceChannel({
@@ -45,6 +44,18 @@ module.exports = {
           guildId: interaction.guildId,
           adapterCreator: voiceChannel.guild.voiceAdapterCreator,
         });
+        // log the REAL reason if the connection dies
+        connection.on('error', (err) =>
+          console.error('[vcai] voice connection error:', err?.message || JSON.stringify(err))
+        );
+      }
+
+      // wait until the connection is actually Ready (surfaces the real failure if it can't connect)
+      try {
+        await entersState(connection, VoiceConnectionStatus.Ready, 15000);
+      } catch (e) {
+        console.error('[vcai] connection never became Ready:', e?.message || JSON.stringify(e));
+        return interaction.followUp("couldn't join VC — check the Railway logs for the real reason.").catch(() => {});
       }
 
       let player = guildPlayers.get(interaction.guildId);
@@ -54,15 +65,15 @@ module.exports = {
         guildPlayers.set(interaction.guildId, player);
       }
 
-      // 3. text -> speech (free edge-tts) -> play it in VC
+      // text -> speech -> play in VC
       await getTTS();
       const audioStream = tts.toStream(aiTextReply);
       const resource = createAudioResource(audioStream, { inputType: StreamType.Arbitrary });
       player.play(resource);
 
     } catch (error) {
-      console.error('[vcai]', error);
-      await interaction.editReply(`voice brain hiccup: ${error.message}`).catch(() => {});
+      console.error('[vcai] execute error:', error?.message || error);
+      await interaction.editReply(`voice brain hiccup: ${error?.message || error}`).catch(() => {});
     }
   },
 };
