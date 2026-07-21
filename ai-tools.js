@@ -337,7 +337,7 @@ async function hordeGenerate(promptText) {
       rep_pen: 1.1,
     },
   };
-  if (HORDE_MODEL) body.models = [HORDE_MODEL];
+  if (HORDE_MODEL) body.models = HORDE_MODEL.split(',').map((m) => m.trim()).filter(Boolean);
 
   const headers = { 'Content-Type': 'application/json', apikey: HORDE_API_KEY, 'Client-Agent': CLIENT_AGENT };
 
