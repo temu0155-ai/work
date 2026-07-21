@@ -461,7 +461,12 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
           if (!tool) {
             toolResultText = `Unknown tool "${call.function.name}"`;
           } else {
-            let args = {}; try {   args = JSON.parse(call.function.arguments || '{}'); } catch (e) {   toolResultText = `Invalid tool arguments format.`; }
+            let args = {};
+            try {
+              args = JSON.parse(call.function.arguments || '{}');
+            } catch (e) {
+              toolResultText = `Invalid tool arguments format.`;
+            }
 
             if (tool.destructive && !userConfirmed) {
               const label = `${call.function.name.replace(/_/g, ' ')}: ${args.channelName || args.roleName || args.memberName}`;
@@ -488,7 +493,7 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
         })
       );
 
-  for (const { toolResultText, silent } of callResults) {
+      for (const { toolResultText, silent } of callResults) {
         if (!silent) results.push(toolResultText);
       }
 
