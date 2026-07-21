@@ -437,18 +437,17 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       
-      // Conditionally attach tools only if the user is asking for server modifications
       const needsTools = /setup|create|delete|channel|role|category|kick|ban|permission/i.test(prompt);
       
       const payload = {
         model: MODEL,
         messages,
-        max_tokens: 700,
+        max_tokens: 400, // Reduced from 700 to prevent AI Horde proxy rejects
       };
 
+      // Only attach tools array if tool keyword matched, and omit tool_choice: 'auto'
       if (needsTools) {
         payload.tools = tools;
-        payload.tool_choice = 'auto';
       }
 
       const response = await client.chat.completions.create(payload);
