@@ -1,11 +1,27 @@
 const { SlashCommandBuilder } = require('discord.js');
-const {
-  joinVoiceChannel, getVoiceConnection, createAudioPlayer, createAudioResource,
-  StreamType, VoiceConnectionStatus, entersState,
-} = require('@discordjs/voice');
 const { generateResponse } = require('../../utils/persona');
-const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName('vcai')
+    .setDescription('Talk to axis (text reply)')
+    .addStringOption((option) =>
+      option.setName('message').setDescription('What you wanna say to her').setRequired(true)
+    ),
+
+  async execute(interaction) {
+    await interaction.deferReply();
+    const prompt = interaction.options.getString('message');
+
+    try {
+      const aiTextReply = await generateResponse(interaction.user.id, prompt, interaction.member.displayName);
+      await interaction.editReply(`🗣️ **axis:** "${aiTextReply}"`);
+    } catch (error) {
+      console.error('[vcai]', error);
+      await interaction.editReply(`⚠️ axis had a moment: ${error.message || 'unknown error'}`).catch(() => {});
+    }
+  },
+};
    // Fallback voice
    const VOICE = process.env.TTS_VOICE || 'en-US-AriaNeural';
 
