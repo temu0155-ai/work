@@ -4,33 +4,39 @@ const {
   StreamType, VoiceConnectionStatus, entersState,
 } = require('@discordjs/voice');
 const { generateResponse } = require('../../utils/persona');
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
-const AXIS_VOICE = process.env.TTS_VOICE || 'en-US-AriaNeural';
-const guildPlayers = new Map();
+// Fallback voice in case TTS fails
+const FALLBACK_VOICE = "en-US-AriaNeural";
+const tts = new MsEdgeTTS();
 
-// Generate speech audio file using edge-tts CLI (way more reliable than JS wrappers)
-function speak(text, voice) {
-  return new Promise((resolve, reject) => {
-    const outFile = path.join(os.tmpdir(), `axis-${Date.now()}.mp3`);
-    const proc = spawn('edge-tts', ['--voice', voice, '--text', text, '--write-media', outFile]);
-    let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`edge-tts exit ${code}: ${stderr.slice(0, 300)}`));
-      } else if (!fs.existsSync(outFile)) {
-        reject(new Error('edge-tts produced no output file'));
-      } else {
-        resolve(outFile);
-      }
-    });
-    proc.on('error', (err) => reject(new Error(`edge-tts not found: ${err.message}`)));
-  });
+// 100% reliable error-to-string converter (handles literally anything)
+function safeError(e) {
+  if (e == null) return 'null or undefined';
+  if (typeof e === 'string') return e;
+  if (e instanceof Error) {
+    return e.message ? `${e.message} (${e.stack?.split('\n')[0] || 'no stack'})` : 'Error with no message';
+  }
+  try { return JSON.stringify(e, Object.getOwnPropertyNames(e)); } catch {}
+  return String(e);
 }
+
+// Initialize TTS with fallback
+let ttsReady = null;
+function getTTS(voice = FALLBACK_VOICE) {
+  if (!ttsReady) {
+    try {
+      ttsReady = tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    } catch (e) {
+      console.error('[vcai] TTS init failed:', safeError(e));
+      // Fallback to default voice
+      ttsReady = tts.setMetadata(FALLBACK_VOICE, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    }
+  }
+  return ttsReady;
+}
+
+const guildPlayers = new Map();
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -46,18 +52,18 @@ module.exports = {
 
     await interaction.deferReply();
     const prompt = interaction.options.getString('message');
+    let stage = 'init';
     let aiTextReply = '';
-    let audioFile = '';
 
     try {
-      // 1. axis thinks
+      // 1. axis thinks (Horde + persona + gf dynamic)
+      stage = 'think';
       aiTextReply = await generateResponse(interaction.user.id, prompt, interaction.member.displayName);
+      stage = 'reply-text';
       await interaction.editReply(`🗣️ **axis:** "${aiTextReply}"`);
 
-      // 2. generate speech audio file
-      audioFile = await speak(aiTextReply, AXIS_VOICE);
-
-      // 3. join VC
+      // 2. join VC connection
+      stage = 'join';
       let connection = getVoiceConnection(interaction.guildId);
       if (!connection) {
         connection = joinVoiceChannel({
@@ -65,10 +71,15 @@ module.exports = {
           guildId: interaction.guildId,
           adapterCreator: voiceChannel.guild.voiceAdapterCreator,
         });
+        connection.on('error', (err) => console.error('[vcai] connection error:', safeError(err)));
       }
+
+      // 3. wait for connection to be ready
+      stage = 'wait-ready';
       await entersState(connection, VoiceConnectionStatus.Ready, 15000);
 
-      // 4. play it
+      // 4. setup audio player
+      stage = 'player';
       let player = guildPlayers.get(interaction.guildId);
       if (!player) {
         player = createAudioPlayer();
@@ -76,22 +87,37 @@ module.exports = {
         guildPlayers.set(interaction.guildId, player);
       }
 
-      const resource = createAudioResource(audioFile, { inputType: StreamType.Arbitrary });
+      // 5. text-to-speech
+      stage = 'tts';
+      await getTTS(); // Will auto-fallback if needed
+      stage = 'tts-stream';
+      let audioStream;
+      try {
+        audioStream = tts.toStream(aiTextReply);
+        // Some versions return a promise
+        if (audioStream && typeof audioStream.then === 'function') {
+          audioStream = await audioStream;
+        }
+      } catch (e) {
+        console.error('[vcai] TTS stream failed:', safeError(e));
+        // Fallback: try again with default voice
+        await getTTS(FALLBACK_VOICE);
+        audioStream = tts.toStream(aiTextReply);
+        if (audioStream && typeof audioStream.then === 'function') {
+          audioStream = await audioStream;
+        }
+      }
+
+      // 6. play in VC
+      stage = 'play';
+      const resource = createAudioResource(audioStream, { inputType: StreamType.Arbitrary });
       player.play(resource);
 
-      // 5. clean up temp file after it finishes playing
-      player.once('stateChange', (_, newState) => {
-        if (newState.status === 'idle' && audioFile) {
-          try { fs.unlinkSync(audioFile); } catch {}
-        }
-      });
-
     } catch (error) {
-      const detail = error?.message || String(error);
-      console.error('[vcai] error:', detail);
+      const detail = safeError(error);
+      console.error(`[vcai] failed at [${stage}]:`, detail);
       const text = aiTextReply ? `🗣️ **axis:** "${aiTextReply}"\n\n` : '';
-      await interaction.editReply(`${text}⚠️ voice hiccup: ${detail}`).catch(() => {});
-      if (audioFile) try { fs.unlinkSync(audioFile); } catch {}
+      await interaction.editReply(`${text}⚠️ voice died at **[${stage}]**: ${detail}`).catch(() => {});
     }
   },
 };
