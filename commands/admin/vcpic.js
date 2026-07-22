@@ -16,7 +16,7 @@ async function generateImage(prompt) {
   const payload = {
     prompt,
     params: { width: 512, height: 512, steps: 20, sampler_name: 'k_euler', cfg_scale: 7 },
-    nsfw: false,
+    nsfw: true,
   };
 
   if (IMAGE_MODEL) {
