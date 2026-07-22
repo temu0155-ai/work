@@ -6,7 +6,7 @@
 
 // ---- Horde config ----
 const HORDE_BASE = 'https://stablehorde.net/api/v2';
-const HORDE_API_KEY = process.env.HORDE_API_KEY || '0000000000';
+const HORDE_API_KEY = process.env.AI_HORDE_API_KEY || process.env.HORDE_API_KEY || '0000000000';
 const HORDE_MODEL = process.env.HORDE_MODEL || '';
 const CLIENT_AGENT = 'kilo-discord-mikasa:1.0:anonymous';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
