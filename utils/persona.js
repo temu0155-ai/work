@@ -121,7 +121,7 @@ async function generateChatReply(channelId, prompt, authorName = '', authorId = 
   else maxLength = 2000;
 
   const convo = getHistory(channelId).map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
-  const promptText = `${PERSONA}\n\n${speakerNote(authorName, authorId)}\n\n${convo ? convo + '\n' : ''}User: ${prompt}\nAssistant:`;
+  const promptText = `${PERSONA}\n\n${convo ? convo + '\n' : ''}User: ${prompt}\n\n${speakerNote(authorName, authorId)}\n\nAssistant:`;
 
   try {
     const reply = cleanReply(await hordeText(promptText, { maxLength, temperature: 0.85, maxContext: 4096 }));
@@ -141,9 +141,7 @@ async function generateResponse(userId, message, authorName = '') {
   console.log('[kilo-check]', JSON.stringify({ name: authorName, id: userId, isKilo: isKilo(authorName, userId), KILO_ID_set: !!KILO_ID }));
 
   const convo = getHistory(userId).map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
-  const promptText = `${PERSONA}\n\n${speakerNote(authorName, userId)}\n\nCRITICAL CONSTRAINT: You are speaking out loud in a voice channel. Keep your answer to 1 single short punchy sentence max. No commas, no lists, no asterisks.\n\n${convo ? convo + '\n' : ''}User: ${message}\nAssistant:`;
-
-  try {
+  const promptText = `${PERSONA}\n\n${convo ? convo + '\n' : ''}User: ${message}\n\nCRITICAL CONSTRAINT: You are speaking out loud in a voice channel. Keep your answer to 1 single short punchy sentence max. No commas, no lists, no asterisks.\n\n${speakerNote(authorName, userId)}\n\nAssistant:`;
     const content = cleanReply(await hordeText(promptText, { maxLength: 60, temperature: 0.75, maxContext: 2048 }));
     if (!content) return "my brain glitched, run it back.";
     pushHistory(userId, [{ role: 'user', content: message }, { role: 'assistant', content: content }]);
