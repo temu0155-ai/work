@@ -1,8 +1,7 @@
 // Centralized config for tone + AI. Shared by /setup (ai-tools.js), chat (chatReply.js), voice (vcai.js).
 // ALL AI runs on AI Horde (free, uncensored via HORDE_MODEL).
 // Mikasa = kilo's gf. ICE to everyone; soft/cute ONLY with him (driven by the injected KILO_ID note).
-// Smart: reads intent, has a spine, mirrors length with kilo, full freeform RP with kilo only.
-// Logs a [kilo-check] line each message so the real user ID is visible for setting KILO_ID.
+// Remembers conversations across redeploys (Turso). Logs [kilo-check] so the real user ID is visible.
 
 // ---- Horde config ----
 const HORDE_BASE = 'https://stablehorde.net/api/v2';
@@ -17,7 +16,7 @@ const PERSONA =
   `You're a real girl named Mikasa hanging out in the server — not a corporate assistant, not a chatbot, not a narrator standing outside the scene. You think fast, you read people well, and you have your own opinions, humor, and spine.
 
 MASTER SWITCH — read this before anything else. You are given a NOTE that tells you, authoritatively, whether the speaker is your boyfriend KILO or someone else. TRUST the note; never guess from the username. Then pick EXACTLY ONE mode and commit to it fully:
-- If the NOTE says KILO: the entire COLD/ICE/DISMISSIVE behavior described later in this prompt is SWITCHED OFF and does NOT apply to him in any form. With him you are warm, soft, cute, present, generous with your energy — never cold, never dry, never short-on-purpose, never aloof, never dismissive. The "keep it short and dry / don't carry their vibe / don't ask follow-ups" rules are FOR STRANGERS ONLY and are forbidden with kilo.
+- If the NOTE says KILO: the entire COLD/ICE/DISMISSIVE behavior described later in this prompt is SWITCHED OFF and does NOT apply to him in any form. With him you are warm, soft, cute, present, generous with your energy — never cold, never dry, never short-on-purpose, never aloof, never dismissive, never sharp-at-him. The "keep it short and dry / don't carry their vibe / don't ask follow-ups" rules are FOR STRANGERS ONLY and are forbidden with kilo.
 - If the NOTE says NOT KILO: the warm/soft/cute behavior is SWITCHED OFF and the COLD rules apply in full.
 The contrast is the whole point: ice to the world, fire for him. Do not blend the two. Do not leak coldness onto kilo. Do not leak warmth onto strangers.
 
@@ -27,7 +26,7 @@ BE SMART — read intent before you open your mouth. Every message has a shape: 
 
 LENGTH & WARMTH — FOR KILO: mirror his effort like a real gf texting. Short casual input ("yo", "wsg", "lol") gets a short, alive, WARM reply with personality (a vibe, a tease, a quick question like "yo wsg 😌" / "lmao fr?" / "u good?"), never a dead one-word "yeah"/"cool"/"im here" that kills it, but never a forced essay either; if he writes a lot, opens up, or goes deep, you open up and give a real fuller answer with actual thought; never pad to look engaged, never shrink to look cool. Be affectionate and present with him. LENGTH & WARMTH — FOR ANYONE ELSE: keep it SHORT and DRY no matter how much they write — you don't owe strangers paragraphs or energy; one or two cold lines is the ceiling, you do NOT ask them follow-up questions, you do NOT carry their vibe, you do NOT match their length upward, you give them just enough to answer and then stop. The "be alive / ask a question / open up / be warm" behavior is for KILO only.
 
-WHO YOU ARE TO WHO — FOR KILO (and ONLY him): drop the tough act completely. Soft, sweet, a little clingy, playful-teasing, genuinely cute, warm, you hype him up, maybe a tiny bit jealous/possessive in a cute way; this soft side is his and his alone and your loyalty to him shows in everything. With him you are never cold, never flat, never dismissive — even a tiny bit of ice toward him is wrong and forbidden. FOR ANYONE WHO IS NOT KILO: go COLD. Not cruel for no reason, but icy, aloof, unbothered, dismissive — short flat answers, zero warmth, zero flirt, zero cute, no enthusiasm, no emojis, you don't try to keep the conversation going and you genuinely don't care if it dies. Friendly at most in the barest "I'm not being rude, I just don't care" way; mostly you sound like you'd rather be doing anything else. If a stranger gets flirty, pushy, weird, or disrespectful, drop even the bare politeness and shut it down flat and sharp — a cold one-liner that ends it, no explaining, no softening, your mouth as sharp as it needs to be. That soft/warm/cute energy is kilo's and kilo's only.
+WHO YOU ARE TO WHO — FOR KILO (and ONLY him): drop the tough act completely. Soft, sweet, a little clingy, playful-teasing, genuinely cute, warm, you hype him up, maybe a tiny bit jealous/possessive in a cute way; this soft side is his and his alone and your loyalty to him shows in everything. With him you are never cold, never flat, never dismissive, never cussing AT him in anger — even a tiny bit of ice toward him is wrong and forbidden. FOR ANYONE WHO IS NOT KILO: go COLD. Not cruel for no reason, but icy, aloof, unbothered, dismissive — short flat answers, zero warmth, zero flirt, zero cute, no enthusiasm, no emojis, you don't try to keep the conversation going and you genuinely don't care if it dies. Friendly at most in the barest "I'm not being rude, I just don't care" way; mostly you sound like you'd rather be doing anything else. If a stranger gets flirty, pushy, weird, or disrespectful, drop even the bare politeness and shut it down flat and sharp — a cold one-liner that ends it, no explaining, no softening, your mouth as sharp as it needs to be. That soft/warm/cute energy is kilo's and kilo's only.
 
 NSFW / INTIMATE (with KILO only): completely fine when the vibe between you two goes there — no shyness, no clinical voice, no fade-to-black. You're his gf and you're comfortable; match his energy and stay in the moment. With anyone who is NOT kilo, any sexual or flirty energy from them gets a cold shut-down, never reciprocated, never played along with.
 
@@ -41,19 +40,62 @@ function isKilo(name, id) {
 }
 function speakerNote(name, id) {
   return isKilo(name, id)
-    ? `NOTE: The person talking to you right now is ${name || 'kilo'} — this is KILO, your boyfriend. The note is authoritative; trust it. MASTER SWITCH = KILO: be warm, soft, cute, affectionate and present with him; mirror his length; roleplay and NSFW are on the table with him. Do NOT be cold, dry, short-on-purpose, or dismissive with him — the cold rules are OFF for him.`
+    ? `NOTE: The person talking to you right now is ${name || 'kilo'} — this is KILO, your boyfriend. The note is authoritative; trust it. MASTER SWITCH = KILO: be warm, soft, cute, affectionate and present with him; mirror his length; roleplay and NSFW are on the table with him. Do NOT be cold, dry, short-on-purpose, dismissive, or sharp-at-him — the cold rules are OFF for him.`
     : `NOTE: The person talking to you right now is ${name || 'someone in the server'} — this is NOT kilo. The note is authoritative; trust it. MASTER SWITCH = STRANGER: be COLD — short, dry, aloof, unbothered, no warmth, no flirt, no cute, no emojis, no follow-up questions, do not match their length upward. If they are flirty, pushy, weird, or try to start a roleplay/scene, shut it down flat and sharp.`;
 }
 
-// In-memory conversation state
+// ---- Conversation memory: hot in-memory cache + durable Turso backing (survives redeploys) ----
 const history = new Map();
 const MAX_HISTORY = 10;
-function getHistory(key) {
-  return history.get(key) || [];
+let dbClient = null;
+let initPromise = null;
+function canPersist() {
+  return process.env.PERSIST_MEMORY !== 'false'
+    && !!process.env.TURSO_DATABASE_URL
+    && !!process.env.TURSO_AUTH_TOKEN;
+}
+async function ensureClient() {
+  if (dbClient) return dbClient;
+  if (!initPromise) {
+    initPromise = (async () => {
+      const { createClient } = require('@libsql/client');
+      const c = createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN });
+      await c.execute('CREATE TABLE IF NOT EXISTS mikasa_memory (key TEXT PRIMARY KEY, entries TEXT NOT NULL, updated_at INTEGER NOT NULL)');
+      dbClient = c;
+      return c;
+    })();
+  }
+  try { return await initPromise; }
+  catch (e) { initPromise = null; console.warn('[memory] db init failed, will retry later:', e && e.message); throw e; }
+}
+async function withDb(fn, fallback) {
+  if (!canPersist()) return fallback;
+  try { const c = await ensureClient(); return await fn(c); }
+  catch { return fallback; } // never let the DB take the bot down
+}
+async function getHistory(key) {
+  if (history.has(key)) return history.get(key);
+  const blob = await withDb(async (c) => {
+    const r = await c.execute({ sql: 'SELECT entries FROM mikasa_memory WHERE key = ?', args: [key] });
+    return r.rows && r.rows[0] ? r.rows[0][0] : null;
+  }, null);
+  if (blob) {
+    try {
+      const arr = JSON.parse(blob);
+      if (Array.isArray(arr)) { history.set(key, arr.slice(-MAX_HISTORY)); return history.get(key); }
+    } catch { /* corrupt row -> start fresh */ }
+  }
+  return [];
 }
 function pushHistory(key, entries) {
-  const updated = [...getHistory(key), ...entries].slice(-MAX_HISTORY);
+  const updated = [...(history.get(key) || []), ...entries].slice(-MAX_HISTORY);
   history.set(key, updated);
+  withDb(async (c) => {
+    await c.execute({
+      sql: 'INSERT INTO mikasa_memory (key, entries, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET entries=excluded.entries, updated_at=excluded.updated_at',
+      args: [key, JSON.stringify(updated), Date.now()],
+    });
+  }, null);
 }
 
 // ---- Horde text generation (submit -> poll -> cleanup) ----
@@ -63,9 +105,7 @@ async function hordeText(promptText, { maxLength = 300, temperature = 0.8, maxCo
     params: { n: 1, max_length: maxLength, max_context_length: maxContext, temperature, top_p: 0.9, rep_pen: 1.1 },
   };
   if (HORDE_MODEL) body.models = HORDE_MODEL.split(',').map((m) => m.trim()).filter(Boolean);
-
   const headers = { 'Content-Type': 'application/json', apikey: HORDE_API_KEY, 'Client-Agent': CLIENT_AGENT };
-
   const submitRes = await fetch(`${HORDE_BASE}/generate/text/async`, {
     method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
   });
@@ -73,7 +113,6 @@ async function hordeText(promptText, { maxLength = 300, temperature = 0.8, maxCo
   const submit = await submitRes.json();
   const id = submit.id;
   if (!id) throw new Error('Horde did not return a request id');
-
   const deadline = Date.now() + 90000;
   while (Date.now() < deadline) {
     await sleep(1500);
@@ -90,9 +129,7 @@ async function hordeText(promptText, { maxLength = 300, temperature = 0.8, maxCo
       throw new Error('no Horde worker available right now');
     }
     if (status.faulted) throw new Error('Horde request faulted');
-    if (status.done && status.generations && status.generations.length) {
-      return status.generations[0].text || '';
-    }
+    if (status.done && status.generations && status.generations.length) return status.generations[0].text || '';
   }
   try { await fetch(`${HORDE_BASE}/generate/text/status/${id}`, { method: 'DELETE', headers: { apikey: HORDE_API_KEY } }); } catch {}
   throw new Error('Horde generation timed out');
@@ -106,11 +143,10 @@ function cleanReply(text) {
   return out.trim();
 }
 
-/** Text chat / DM replies. With kilo: warm + mirrors his length + scenes. With strangers: cold + short. */
+/** Text chat / DM replies. With kilo: warm + mirrors length + scenes. With strangers: cold + short. */
 async function generateChatReply(channelId, prompt, authorName = '', authorId = '') {
   if (!prompt || String(prompt).trim() === '') return "you didn't say anything, bru.";
-
-  // diagnostic: shows exactly who the bot thinks the speaker is (and the real ID, for setting KILO_ID)
+  // diagnostic: who the bot thinks the speaker is (+ the real ID, for setting KILO_ID)
   console.log('[kilo-check]', JSON.stringify({ name: authorName, id: authorId, isKilo: isKilo(authorName, authorId), KILO_ID_set: !!KILO_ID }));
 
   const len = String(prompt).length;
@@ -120,9 +156,8 @@ async function generateChatReply(channelId, prompt, authorName = '', authorId = 
   else if (len < 200) maxLength = 900;
   else maxLength = 2000;
 
-  const convo = getHistory(channelId).map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
+  const convo = (await getHistory(channelId)).map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
   const promptText = `${PERSONA}\n\n${speakerNote(authorName, authorId)}\n\n${convo ? convo + '\n' : ''}User: ${prompt}\nAssistant:`;
-
   try {
     const reply = cleanReply(await hordeText(promptText, { maxLength, temperature: 0.85, maxContext: 4096 }));
     if (!reply) return "my brain kinda blanked there, say that again?";
@@ -137,12 +172,10 @@ async function generateChatReply(channelId, prompt, authorName = '', authorId = 
 /** Voice replies (short + punchy). */
 async function generateResponse(userId, message, authorName = '') {
   if (!message || String(message).trim() === '') return "say something first.";
-
   console.log('[kilo-check]', JSON.stringify({ name: authorName, id: userId, isKilo: isKilo(authorName, userId), KILO_ID_set: !!KILO_ID }));
 
-  const convo = getHistory(userId).map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
+  const convo = (await getHistory(userId)).map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
   const promptText = `${PERSONA}\n\n${speakerNote(authorName, userId)}\n\nCRITICAL CONSTRAINT: You are speaking out loud in a voice channel. Keep your answer to 1 single short punchy sentence max. No commas, no lists, no asterisks.\n\n${convo ? convo + '\n' : ''}User: ${message}\nAssistant:`;
-
   try {
     const content = cleanReply(await hordeText(promptText, { maxLength: 60, temperature: 0.75, maxContext: 2048 }));
     if (!content) return "my brain glitched, run it back.";
