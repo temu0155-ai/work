@@ -110,7 +110,6 @@ function cleanReply(text) {
 async function generateChatReply(channelId, prompt, authorName = '', authorId = '') {
   if (!prompt || String(prompt).trim() === '') return "you didn't say anything, bru.";
 
-  // diagnostic: shows exactly who the bot thinks the speaker is (and the real ID, for setting KILO_ID)
   console.log('[kilo-check]', JSON.stringify({ name: authorName, id: authorId, isKilo: isKilo(authorName, authorId), KILO_ID_set: !!KILO_ID }));
 
   const len = String(prompt).length;
@@ -142,6 +141,8 @@ async function generateResponse(userId, message, authorName = '') {
 
   const convo = getHistory(userId).map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
   const promptText = `${PERSONA}\n\n${convo ? convo + '\n' : ''}User: ${message}\n\nCRITICAL CONSTRAINT: You are speaking out loud in a voice channel. Keep your answer to 1 single short punchy sentence max. No commas, no lists, no asterisks.\n\n${speakerNote(authorName, userId)}\n\nAssistant:`;
+
+  try {
     const content = cleanReply(await hordeText(promptText, { maxLength: 60, temperature: 0.75, maxContext: 2048 }));
     if (!content) return "my brain glitched, run it back.";
     pushHistory(userId, [{ role: 'user', content: message }, { role: 'assistant', content: content }]);
