@@ -1,6 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const HORDE_BASE = 'https://stablehorde.net/api/v2';
-const HORDE_API_KEY = process.env.HORDE_API_KEY || '0000000000';
+const HORDE_API_KEY = process.env.AI_HORDE_API_KEY || process.env.HORDE_API_KEY || '0000000000';
 // Comma-separated fallback list of models with decent worker counts, instead of leaving fully unset
 const IMAGE_MODEL = process.env.HORDE_IMAGE_MODEL || 'stable_diffusion,Deliberate,Realistic Vision,Dreamshaper';
 const CLIENT_AGENT = 'kilo-discord-mikasa:1.0:anonymous';
