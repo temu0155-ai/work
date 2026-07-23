@@ -8,34 +8,91 @@ const prism = require('prism-media');
 const fs = require('fs');
 const path = require('path');
 
-// Where captured clips land — temporary, just for confirming the pipeline in Phase 1.
 const CAPTURE_DIR = path.join(__dirname, '../../captures');
 if (!fs.existsSync(CAPTURE_DIR)) fs.mkdirSync(CAPTURE_DIR, { recursive: true });
 
-function startListeningToUser(connection, userId, guildId) {
-  const receiver = connection.receiver;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_STT_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
 
-  // Subscribe to this user's audio. Discord ends the stream after ~1s of silence
-  // (EndBehaviorType.AfterSilence) — that's our natural "they stopped talking" cue.
-  const opusStream = receiver.subscribe(userId, {
-    end: {
-      behavior: EndBehaviorType.AfterSilence,
-      duration: 1000,
-    },
+// Minimal WAV header writer — turns raw 48kHz stereo 16-bit PCM into a valid .wav file.
+function pcmToWav(pcmBuffer, sampleRate = 48000, channels = 2, bitDepth = 16) {
+  const byteRate = (sampleRate * channels * bitDepth) / 8;
+  const blockAlign = (channels * bitDepth) / 8;
+  const dataSize = pcmBuffer.length;
+  const header = Buffer.alloc(44);
+
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitDepth, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(dataSize, 40);
+
+  return Buffer.concat([header, pcmBuffer]);
+}
+
+// Send the WAV file to Groq's hosted Whisper endpoint — no local compilation needed.
+async function transcribeWithGroq(wavPath) {
+  if (!GROQ_API_KEY) throw new Error('GROQ_API_KEY is not set');
+
+  const form = new FormData();
+  const fileBuffer = fs.readFileSync(wavPath);
+  form.append('file', new Blob([fileBuffer], { type: 'audio/wav' }), path.basename(wavPath));
+  form.append('model', 'whisper-large-v3-turbo'); // fast + free-tier friendly
+  form.append('language', 'en');
+  form.append('response_format', 'text');
+
+  const res = await fetch(GROQ_STT_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
+    body: form,
+    signal: AbortSignal.timeout(20000),
   });
 
-  // Discord sends 48kHz stereo Opus — decode it to raw PCM.
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Groq STT failed (${res.status}): ${errText}`);
+  }
+  return (await res.text()).trim();
+}
+
+function startListeningToUser(connection, userId) {
+  const receiver = connection.receiver;
+
+  const opusStream = receiver.subscribe(userId, {
+    end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
+  });
+
   const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
+  const chunks = [];
 
-  const filename = `${userId}-${Date.now()}.pcm`;
-  const filepath = path.join(CAPTURE_DIR, filename);
-  const outStream = fs.createWriteStream(filepath);
+  opusStream.pipe(decoder);
+  decoder.on('data', (chunk) => chunks.push(chunk));
 
-  opusStream.pipe(decoder).pipe(outStream);
+  decoder.on('end', async () => {
+    const pcmBuffer = Buffer.concat(chunks);
+    if (pcmBuffer.length < 4800) return; // too short, skip noise/mic-taps
 
-  outStream.on('finish', () => {
-    console.log(`[vclisten] captured clip: ${filepath}`);
-    // Phase 2 will pick this file up and run it through Whisper.
+    const wavBuffer = pcmToWav(pcmBuffer);
+    const wavPath = path.join(CAPTURE_DIR, `${userId}-${Date.now()}.wav`);
+    fs.writeFileSync(wavPath, wavBuffer);
+    console.log(`[vclisten] saved: ${wavPath}, sending to Groq for transcription...`);
+
+    try {
+      const text = await transcribeWithGroq(wavPath);
+      console.log(`[vclisten] transcribed: "${text}"`);
+    } catch (err) {
+      console.error('[vclisten] transcription error:', err.message);
+    } finally {
+      fs.unlink(wavPath, () => {});
+    }
   });
 
   opusStream.on('error', (err) => console.error('[vclisten] opus stream error:', err.message));
@@ -45,7 +102,7 @@ function startListeningToUser(connection, userId, guildId) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('vclisten')
-    .setDescription('Phase 1 test: axis joins VC and captures audio clips when you talk'),
+    .setDescription('Phase 2: axis joins VC, listens, and transcribes what you say via Groq'),
   async execute(interaction) {
     await interaction.deferReply();
     const voiceChannel = interaction.member?.voice?.channel;
@@ -61,19 +118,18 @@ module.exports = {
         channelId: voiceChannel.id,
         guildId,
         adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-        selfDeaf: false, // must hear audio, so can't self-deafen
+        selfDeaf: false,
       });
     }
 
-    // Listen for the person who ran the command specifically (Phase 1 scope).
     const userId = interaction.user.id;
     connection.receiver.speaking.on('start', (speakingUserId) => {
-      if (speakingUserId !== userId) return; // only capture the command user for now
-      startListeningToUser(connection, speakingUserId, guildId);
+      if (speakingUserId !== userId) return;
+      startListeningToUser(connection, speakingUserId);
     });
 
     await interaction.editReply(
-      `listening now — say something in VC, then check the \`captures/\` folder for a .pcm file.`
+      `listening now — say something in VC, then check Railway logs for the transcription.`
     );
   },
 };
