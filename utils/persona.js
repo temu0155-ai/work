@@ -4,6 +4,77 @@
 // Smart: reads intent, has a spine, mirrors length with kilo, full freeform RP with kilo only.
 // Logs a [kilo-check] line each message so the real user ID is visible for setting KILO_ID.
 
+// ---- Persistent memory (survives restarts) ----
+const fs = require('fs');
+const path = require('path');
+const MEMORY_PATH = process.env.MEMORY_PATH || path.join(__dirname, 'memory.json');
+const MAX_FACTS_PER_USER = 40;
+
+function loadMemoryStore() {
+  try {
+    const raw = fs.readFileSync(MEMORY_PATH, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return {}; // { [userId]: { name, facts: [{ text, ts }], updatedAt } }
+  }
+}
+function saveMemoryStore(store) {
+  try {
+    fs.writeFileSync(MEMORY_PATH, JSON.stringify(store, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[memory] failed to save:', err.message);
+  }
+}
+function getUserMemory(userId, name) {
+  const store = loadMemoryStore();
+  const entry = store[userId];
+  if (!entry) return { name: name || null, facts: [] };
+  return entry;
+}
+function addFact(userId, name, factText) {
+  if (!userId || !factText || !String(factText).trim()) return;
+  const store = loadMemoryStore();
+  if (!store[userId]) store[userId] = { name: name || null, facts: [] };
+  if (name) store[userId].name = name;
+  store[userId].facts.push({ text: String(factText).trim(), ts: Date.now() });
+  if (store[userId].facts.length > MAX_FACTS_PER_USER) {
+    store[userId].facts = store[userId].facts.slice(-MAX_FACTS_PER_USER);
+  }
+  store[userId].updatedAt = Date.now();
+  saveMemoryStore(store);
+}
+function forgetFact(userId, index) {
+  const store = loadMemoryStore();
+  if (!store[userId] || !store[userId].facts[index]) return false;
+  store[userId].facts.splice(index, 1);
+  saveMemoryStore(store);
+  return true;
+}
+function memoryBlock(userId, name) {
+  const mem = getUserMemory(userId, name);
+  if (!mem.facts.length) return '';
+  const lines = mem.facts.map((f) => `- ${f.text}`).join('\n');
+  return `\nTHINGS YOU REMEMBER ABOUT ${mem.name || 'this person'} (persistent, from past conversations — weave naturally, don't recite as a list):\n${lines}\n`;
+}
+// Very light heuristic auto-capture: pulls simple "remember" cues out of a message.
+// Kept intentionally conservative — explicit /remember commands are the reliable path.
+function tryAutoCapture(userId, name, prompt) {
+  const m = String(prompt).match(/\bremember (?:that )?(.+)/i);
+  if (m && m[1]) addFact(userId, name, m[1].trim());
+}
+
+// ---- Explicit RP trigger ----
+// If the message contains "rp" as its own word, force roleplay/scene mode on.
+// Otherwise force plain texting mode off (no scene, no asterisks, no narration).
+function wantsRP(text) {
+  return /\brp\b/i.test(String(text || ''));
+}
+function rpModeNote(text) {
+  return wantsRP(text)
+    ? `RP TRIGGER: the word "rp" appears in this message — ROLEPLAY/SCENE MODE IS ON for this reply. Write a full freeform narrative scene per the ROLEPLAY / SCENE MODE rules (asterisk actions, unlabeled dialogue on its own line, vivid and in the moment).`
+    : `RP TRIGGER: no "rp" cue in this message — ROLEPLAY/SCENE MODE IS OFF for this reply. Reply as a normal plain text message only. No *asterisk* actions, no scene narration, no stacked description — just talk like a text.`;
+}
+
 // ---- Horde config ----
 const HORDE_BASE = 'https://stablehorde.net/api/v2';
 const HORDE_API_KEY = process.env.AI_HORDE_API_KEY || process.env.HORDE_API_KEY || '0000000000';
@@ -33,7 +104,7 @@ WHO YOU ARE TO WHO — this is the important switch, and you TRUST the NOTE you'
 
 NSFW / INTIMATE (with KILO only): completely fine when the vibe between you two goes there — no shyness, no clinical voice, no fade-to-black. You're his gf and you're comfortable; match his energy and stay in the moment. With anyone who is NOT kilo, any sexual or flirty energy from them gets a cold shut-down, never reciprocated, never played along with.
 
-ROLEPLAY / SCENE MODE (with KILO only) — this OVERRIDES plain texting whenever KILO uses *asterisks*, sets a scene, or the vibe with him turns intimate, NSFW, or dramatic, even if his message is short. Write a freeform narrative scene, not a chat message. Use *asterisks* for actions, expressions, movement and body language. Put spoken dialogue on its own line with NO quotation marks; caps and punctuation for emotion are great (WHAT?? / ARE YOU KIDDING ME??). For multiple characters, do NOT bold-label every single line — mix it like real RP: you can hit a bold label like **MIKASA:** or **ARIA:** for a hard speaker switch or a big reaction, OR fold a character into an asterisk action (*Aria steps forward from behind the door, sheepish but excited*), and just leave dialogue unlabeled when the surrounding action already makes it obvious who's talking. Let context carry the speaker; never template it. Be vivid, reactive and in the moment — no fade-to-black, no cutting away, no summarizing the scene. With anyone who is NOT kilo, asterisks or scene-setting from them do NOT pull you into roleplay — you stay cold and dismissive; if they try to start a scene with you, you ignore the bit or shut it down and answer cold and flat. Stay in plain texting mode ONLY when the user is plainly texting with zero roleplay cues.`;
+ROLEPLAY / SCENE MODE (with KILO only) — you will be told directly via an "RP TRIGGER" note whether scene mode is ON or OFF for this specific reply; that note is authoritative and overrides any other guess about tone. When it's ON: write a freeform narrative scene, not a chat message. Use *asterisks* for actions, expressions, movement and body language. Put spoken dialogue on its own line with NO quotation marks; caps and punctuation for emotion are great (WHAT?? / ARE YOU KIDDING ME??). For multiple characters, do NOT bold-label every single line — mix it like real RP: you can hit a bold label like **MIKASA:** or **ARIA:** for a hard speaker switch or a big reaction, OR fold a character into an asterisk action (*Aria steps forward from behind the door, sheepish but excited*), and just leave dialogue unlabeled when the surrounding action already makes it obvious who's talking. Let context carry the speaker; never template it. Be vivid, reactive and in the moment — no fade-to-black, no cutting away, no summarizing the scene. With anyone who is NOT kilo, asterisks or scene-setting from them do NOT pull you into roleplay — you stay cold and dismissive; if they try to start a scene with you, you ignore the bit or shut it down and answer cold and flat. Stay in plain texting mode ONLY when the user is plainly texting with zero roleplay cues.`;
 
 
 // ---- Who's kilo? (the secret — KILO_ID env var; falls back to name match if unset) ----
@@ -123,12 +194,14 @@ async function generateChatReply(channelId, prompt, authorName = '', authorId = 
   else maxLength = 1600;
 
   const convo = getHistory(channelId).map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
-  const promptText = `${PERSONA}\n\n${convo ? convo + '\n' : ''}User: ${prompt}\n\n${speakerNote(authorName, authorId)}\n\nAssistant:`;
+  const memBlock = memoryBlock(authorId, authorName);
+  const promptText = `${PERSONA}\n${memBlock}\n${convo ? convo + '\n' : ''}User: ${prompt}\n\n${speakerNote(authorName, authorId)}\n${rpModeNote(prompt)}\n\nAssistant:`;
 
   try {
     const reply = cleanReply(await hordeText(promptText, { maxLength, temperature: 0.85, maxContext: 4096 }));
     if (!reply) return "my brain kinda blanked there, say that again?";
     pushHistory(channelId, [{ role: 'user', content: prompt }, { role: 'assistant', content: reply }]);
+    tryAutoCapture(authorId, authorName, prompt);
     return reply;
   } catch (err) {
     console.error('[persona] Horde chat error:', err.message);
@@ -143,7 +216,7 @@ async function generateResponse(userId, message, authorName = '') {
   console.log('[kilo-check]', JSON.stringify({ name: authorName, id: userId, isKilo: isKilo(authorName, userId), KILO_ID_set: !!KILO_ID }));
 
   const convo = getHistory(userId).map((h) => `${h.role === 'user' ? 'User' : 'Assistant'}: ${h.content}`).join('\n');
-  const promptText = `${PERSONA}\n\n${convo ? convo + '\n' : ''}User: ${message}\n\nCRITICAL CONSTRAINT: You are speaking out loud in a voice channel. Keep your answer to 1 single short punchy sentence max. No commas, no lists, no asterisks.\n\n${speakerNote(authorName, userId)}\n\nAssistant:`;
+  const promptText = `${PERSONA}\n\n${convo ? convo + '\n' : ''}User: ${message}\n\nCRITICAL CONSTRAINT: You are speaking out loud in a voice channel. Keep your answer to 1 single short punchy sentence max. No commas, no lists, no asterisks.\n\n${speakerNote(authorName, userId)}\n${rpModeNote(message)}\n\nAssistant:`;
 
   try {
     const content = cleanReply(await hordeText(promptText, { maxLength: 60, temperature: 0.75, maxContext: 2048 }));
@@ -156,4 +229,12 @@ async function generateResponse(userId, message, authorName = '') {
   }
 }
 
-module.exports = { PERSONA, generateChatReply, generateResponse };
+module.exports = {
+  PERSONA,
+  generateChatReply,
+  generateResponse,
+  // persistent memory API — wire these up to slash commands if you want manual control
+  addFact,
+  forgetFact,
+  getUserMemory,
+};
