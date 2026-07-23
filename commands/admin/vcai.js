@@ -37,7 +37,7 @@ module.exports = {
 
     try {
       const reply = await generateResponse(interaction.user.id, prompt, interaction.member.displayName);
-      await interaction.editReply(`🗣️ **Mikasa:** ${reply}`);
+      await interaction.editReply(`^.^ **Mikasa:** ${reply}`);
       textReplySent = true;
 
       if (!voiceChannel || !guildId) return; // text-only if user isn't in VC
