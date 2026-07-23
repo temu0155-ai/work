@@ -1,20 +1,23 @@
 // ai-tools.js
 // Discord AI setup assistant — powered by AI Horde (text generation).
 // Horde has NO native tool calling, so we prompt the model to emit a JSON
-// tool-call block and parse it ourselves. Everything else is unchanged.
+// tool-call block and parse it ourselves.
 
 const { PermissionFlagsBits, ChannelType } = require('discord.js');
-const { PERSONA } = require('./utils/persona');
 
 // ---- Horde config (all optional via env) ----
 const HORDE_BASE = 'https://stablehorde.net/api/v2';
-const HORDE_API_KEY = process.env.HORDE_API_KEY || '0000000000'; // 10 zeros = anonymous [[18]]
-const HORDE_MODEL = process.env.HORDE_MODEL || '';              // '' = any available worker
+const HORDE_API_KEY = process.env.AI_HORDE_API_KEY || process.env.HORDE_API_KEY || '0000000000';
+const HORDE_MODEL = process.env.HORDE_SETUP_MODEL || process.env.HORDE_MODEL || 'aphrodite/TheDrummer/Cydonia-24B-v4.3';
 const HORDE_MAX_LENGTH = parseInt(process.env.HORDE_MAX_LENGTH || '400', 10);
 const HORDE_MAX_CONTEXT = parseInt(process.env.HORDE_MAX_CONTEXT || '4096', 10);
-const HORDE_POLL_MS = 1500;     // Horde caches status ~1s [[2]]
-const HORDE_TIMEOUT_MS = 90000; // give queued/anonymous gens time
+const HORDE_POLL_MS = 1500;
+const HORDE_TIMEOUT_MS = 90000;
 const CLIENT_AGENT = 'kilo-discord-setup-bot:1.0:anonymous';
+
+// Channel name to post destructive-action audit logs to. Set AUDIT_LOG_CHANNEL_NAME
+// in Railway to override. If the channel doesn't exist, logging is silently skipped.
+const AUDIT_LOG_CHANNEL_NAME = process.env.AUDIT_LOG_CHANNEL_NAME || 'mod-log';
 
 const conversationHistory = new Map();
 const MAX_HISTORY_MESSAGES = 12;
@@ -43,21 +46,60 @@ const PERMISSION_NAMES = [
 function resolvePermissions(names = []) {
   return names.filter((n) => PERMISSION_NAMES.includes(n));
 }
+
+// ---- Fuzzy matching helpers ----
+function levenshtein(a, b) {
+  a = a.toLowerCase(); b = b.toLowerCase();
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+function fuzzyFind(candidates, name, getName) {
+  const target = String(name).toLowerCase();
+  let exact = candidates.find((c) => getName(c).toLowerCase() === target);
+  if (exact) return exact;
+
+  let best = null;
+  let bestDist = Infinity;
+  for (const c of candidates) {
+    const cName = getName(c).toLowerCase();
+    if (cName.includes(target) || target.includes(cName)) {
+      const dist = Math.abs(cName.length - target.length);
+      if (dist < bestDist) { bestDist = dist; best = c; }
+      continue;
+    }
+    const dist = levenshtein(cName, target);
+    const threshold = Math.max(2, Math.floor(target.length * 0.34));
+    if (dist <= threshold && dist < bestDist) { bestDist = dist; best = c; }
+  }
+  return best;
+}
+
 function findChannel(guild, name) {
-  return guild.channels.cache.find((c) => c.name.toLowerCase() === String(name).toLowerCase());
+  return fuzzyFind([...guild.channels.cache.values()], name, (c) => c.name);
 }
 function findRole(guild, name) {
   if (name === '@everyone') return guild.roles.everyone;
-  return guild.roles.cache.find((r) => r.name.toLowerCase() === String(name).toLowerCase());
+  return fuzzyFind([...guild.roles.cache.values()], name, (r) => r.name);
 }
 async function findMember(guild, name) {
-  const members = await guild.members.fetch();
-  return members.find(
-    (m) =>
-      m.user.username.toLowerCase() === String(name).toLowerCase() ||
-      m.displayName.toLowerCase() === String(name).toLowerCase()
+  const members = [...(await guild.members.fetch()).values()];
+  const target = String(name).toLowerCase();
+  let exact = members.find(
+    (m) => m.user.username.toLowerCase() === target || m.displayName.toLowerCase() === target
   );
+  if (exact) return exact;
+  return fuzzyFind(members, name, (m) => m.displayName) || fuzzyFind(members, name, (m) => m.user.username);
 }
+
 function formatList(header, lines, emptyMessage, limit = 150) {
   if (!lines.length) return emptyMessage;
   const shown = lines.slice(0, limit);
@@ -66,7 +108,23 @@ function formatList(header, lines, emptyMessage, limit = 150) {
   return text;
 }
 
-// ===================== TOOLS (UNCHANGED) =====================
+// ---- Audit logging for destructive actions ----
+async function postAuditLog(guild, requesterMember, toolName, args, resultText) {
+  try {
+    const channel = guild.channels.cache.find(
+      (c) => c.type === ChannelType.GuildText && c.name.toLowerCase() === AUDIT_LOG_CHANNEL_NAME.toLowerCase()
+    );
+    if (!channel) return;
+    const who = requesterMember ? `${requesterMember.user.tag}` : 'unknown';
+    await channel.send(
+      `**[setup]** ${who} ran \`${toolName}\`(${JSON.stringify(args)}) -> ${resultText}`
+    );
+  } catch (err) {
+    console.error('[ai-tools] failed to post audit log:', err.message);
+  }
+}
+
+// ===================== TOOLS =====================
 const toolDefs = [
   {
     name: 'list_channels', destructive: false, silent: true,
@@ -95,6 +153,24 @@ const toolDefs = [
         .sort((a, b) => b.position - a.position)
         .map((r) => `- ${r.name}${r.color ? ` (${r.hexColor})` : ''}`);
       return formatList('Existing roles:', lines, 'No custom roles exist yet.');
+    },
+  },
+  {
+    name: 'list_members', destructive: false, silent: true,
+    schema: { type: 'function', function: { name: 'list_members',
+      description: 'List server members, optionally filtered by a name search. Use this if a member lookup by exact name fails and you need to see who is actually in the server.',
+      parameters: { type: 'object', properties: {
+        search: { type: 'string', description: 'Optional partial name to filter by' },
+      } } } },
+    run: async (args, guild) => {
+      const members = [...(await guild.members.fetch()).values()];
+      const filtered = args.search
+        ? members.filter((m) =>
+            m.displayName.toLowerCase().includes(args.search.toLowerCase()) ||
+            m.user.username.toLowerCase().includes(args.search.toLowerCase()))
+        : members;
+      const lines = filtered.map((m) => `- ${m.displayName} (@${m.user.username})`);
+      return formatList('Members:', lines, 'No matching members found.', 100);
     },
   },
   {
@@ -201,6 +277,22 @@ const toolDefs = [
     },
   },
   {
+    name: 'set_channel_nsfw', destructive: false,
+    schema: { type: 'function', function: { name: 'set_channel_nsfw',
+      description: 'Mark a text channel as NSFW or not',
+      parameters: { type: 'object', properties: {
+        channelName: { type: 'string' },
+        nsfw: { type: 'boolean' },
+      }, required: ['channelName', 'nsfw'] } } },
+    run: async (args, guild) => {
+      const channel = findChannel(guild, args.channelName);
+      if (!channel) return `Couldn't find a channel named "${args.channelName}"`;
+      if (typeof channel.setNSFW !== 'function') return `"${channel.name}" isn't a text channel — can't set NSFW`;
+      await channel.setNSFW(!!args.nsfw);
+      return `Set "${channel.name}" NSFW = ${!!args.nsfw}`;
+    },
+  },
+  {
     name: 'set_channel_permissions', destructive: false,
     schema: { type: 'function', function: { name: 'set_channel_permissions',
       description: 'Allow or deny permissions for a role in one channel — e.g. make a channel private or read-only',
@@ -220,6 +312,39 @@ const toolDefs = [
       for (const name of args.deny || []) overwrites[name] = false;
       await channel.permissionOverwrites.edit(role, overwrites);
       return `Updated permissions for "${role.name}" in "${channel.name}"`;
+    },
+  },
+  {
+    name: 'create_webhook', destructive: false,
+    schema: { type: 'function', function: { name: 'create_webhook',
+      description: 'Create a webhook in a text channel (useful for external integrations)',
+      parameters: { type: 'object', properties: {
+        channelName: { type: 'string' },
+        webhookName: { type: 'string' },
+      }, required: ['channelName', 'webhookName'] } } },
+    run: async (args, guild) => {
+      const channel = findChannel(guild, args.channelName);
+      if (!channel) return `Couldn't find a channel named "${args.channelName}"`;
+      if (typeof channel.createWebhook !== 'function') return `"${channel.name}" can't have webhooks`;
+      const hook = await channel.createWebhook({ name: args.webhookName });
+      return `Created webhook "${hook.name}" in "${channel.name}" — URL: ${hook.url}`;
+    },
+  },
+  {
+    name: 'bulk_delete_messages', destructive: true,
+    schema: { type: 'function', function: { name: 'bulk_delete_messages',
+      description: 'Delete a number of recent messages from a text channel (max 100, Discord only allows messages under 14 days old)',
+      parameters: { type: 'object', properties: {
+        channelName: { type: 'string' },
+        count: { type: 'number', description: 'How many recent messages to delete, max 100' },
+      }, required: ['channelName', 'count'] } } },
+    run: async (args, guild) => {
+      const channel = findChannel(guild, args.channelName);
+      if (!channel) return `Couldn't find a channel named "${args.channelName}"`;
+      if (typeof channel.bulkDelete !== 'function') return `"${channel.name}" doesn't support message deletion`;
+      const count = Math.min(100, Math.max(1, args.count));
+      const deleted = await channel.bulkDelete(count, true);
+      return `Deleted ${deleted.size} message(s) from "${channel.name}"`;
     },
   },
   {
@@ -261,11 +386,59 @@ const toolDefs = [
       return `Kicked ${name}`;
     },
   },
+  {
+    name: 'ban_member', destructive: true,
+    schema: { type: 'function', function: { name: 'ban_member',
+      description: 'Ban a member from the server',
+      parameters: { type: 'object', properties: {
+        memberName: { type: 'string', description: 'Username or display name' },
+        reason: { type: 'string' },
+      }, required: ['memberName'] } } },
+    run: async (args, guild) => {
+      const member = await findMember(guild, args.memberName);
+      if (!member) return `Couldn't find a member named "${args.memberName}"`;
+      const name = member.displayName;
+      await member.ban({ reason: args.reason || undefined });
+      return `Banned ${name}`;
+    },
+  },
+  {
+    name: 'unban_member', destructive: true,
+    schema: { type: 'function', function: { name: 'unban_member',
+      description: 'Unban a user by username (they must already be banned)',
+      parameters: { type: 'object', properties: {
+        username: { type: 'string', description: 'Their exact Discord username' },
+      }, required: ['username'] } } },
+    run: async (args, guild) => {
+      const bans = await guild.bans.fetch();
+      const entry = bans.find((b) => b.user.username.toLowerCase() === String(args.username).toLowerCase());
+      if (!entry) return `Couldn't find a ban for username "${args.username}"`;
+      await guild.bans.remove(entry.user.id);
+      return `Unbanned ${entry.user.username}`;
+    },
+  },
+  {
+    name: 'timeout_member', destructive: true,
+    schema: { type: 'function', function: { name: 'timeout_member',
+      description: 'Timeout (mute) a member for a duration',
+      parameters: { type: 'object', properties: {
+        memberName: { type: 'string', description: 'Username or display name' },
+        minutes: { type: 'number', description: 'Duration in minutes' },
+        reason: { type: 'string' },
+      }, required: ['memberName', 'minutes'] } } },
+    run: async (args, guild) => {
+      const member = await findMember(guild, args.memberName);
+      if (!member) return `Couldn't find a member named "${args.memberName}"`;
+      const ms = Math.max(1, args.minutes) * 60 * 1000;
+      await member.timeout(ms, args.reason || undefined);
+      return `Timed out ${member.displayName} for ${args.minutes} minute(s)`;
+    },
+  },
 ];
 
 const toolsByName = Object.fromEntries(toolDefs.map((t) => [t.name, t]));
 
-// ===================== HORDE BRAIN (NEW) =====================
+// ===================== HORDE BRAIN =====================
 function buildToolCatalog() {
   return toolDefs.map((t) => {
     const fn = t.schema.function;
@@ -281,12 +454,12 @@ function buildToolCatalog() {
 
 function buildPrompt(history, userPrompt) {
   const sys =
-    `${PERSONA}\n\nYou are the server's setup assistant. You manage channels, categories, roles, permissions, role assignments, and kicks by calling tools.\n\n` +
+    `You are a Discord server's setup assistant. You manage channels, categories, roles, permissions, role assignments, kicks, bans, timeouts, and message cleanup by calling tools. Be precise — do exactly what's asked, nothing more, nothing less. Never guess a name if list_channels/list_roles/list_members would tell you for certain.\n\n` +
     `To call tools, reply with ONLY a fenced JSON array, exactly like:\n` +
     '```tool_calls\n[{"name":"create_channel","arguments":{"name":"general","type":"text"}}]\n```\n\n' +
     `Available tools:\n${buildToolCatalog()}\n\n` +
     `Rules:\n` +
-    `- Call list_channels and/or list_roles first when you need to know what exists.\n` +
+    `- Call list_channels, list_roles, and/or list_members first when you need to know what exists, especially before a destructive action.\n` +
     `- Create categories before the channels that go in them.\n` +
     `- When finished, reply with a short casual plain-text summary and NO code fence / NO JSON.\n` +
     `- Output EITHER a tool_calls block OR a final answer. Never both.`;
@@ -298,7 +471,6 @@ function stripFences(text) {
   return String(text || '').replace(/```[\s\S]*?```/g, '').replace(/```/g, '').trim();
 }
 
-// Pull a JSON tool-call array out of the model's text. Returns null => treat as final answer.
 function extractToolCalls(text) {
   if (!text) return null;
   let candidate = null;
@@ -324,7 +496,6 @@ function extractToolCalls(text) {
   }
 }
 
-// Submit -> poll -> return generated text. (Horde async workflow [[2]])
 async function hordeGenerate(promptText) {
   const body = {
     prompt: promptText,
@@ -332,12 +503,12 @@ async function hordeGenerate(promptText) {
       n: 1,
       max_length: HORDE_MAX_LENGTH,
       max_context_length: HORDE_MAX_CONTEXT,
-      temperature: 0.2, // low temp = reliable JSON
+      temperature: 0.2,
       top_p: 0.9,
       rep_pen: 1.1,
     },
   };
-  if (HORDE_MODEL) body.models = [HORDE_MODEL];
+  if (HORDE_MODEL) body.models = HORDE_MODEL.split(',').map((m) => m.trim()).filter(Boolean);
 
   const headers = { 'Content-Type': 'application/json', apikey: HORDE_API_KEY, 'Client-Agent': CLIENT_AGENT };
 
@@ -352,7 +523,7 @@ async function hordeGenerate(promptText) {
   while (Date.now() < deadline) {
     await sleep(HORDE_POLL_MS);
     const statusRes = await fetch(`${HORDE_BASE}/generate/text/status/${id}`, { headers: { apikey: HORDE_API_KEY, 'Client-Agent': CLIENT_AGENT } });
-    if (!statusRes.ok) continue; // transient; keep polling
+    if (!statusRes.ok) continue;
     const status = await statusRes.json();
     if (status.is_possible === false) {
       try { await fetch(`${HORDE_BASE}/generate/text/status/${id}`, { method: 'DELETE', headers: { apikey: HORDE_API_KEY } }); } catch {}
@@ -367,7 +538,7 @@ async function hordeGenerate(promptText) {
   throw new Error('Horde generation timed out');
 }
 
-// ===================== ENTRYPOINT (same signature/behavior) =====================
+// ===================== ENTRYPOINT =====================
 async function runAiSetup(prompt, guild, sessionId, requesterMember) {
   if (requesterMember && !requesterMember.permissions.has(PermissionFlagsBits.Administrator)) {
     return "You need Administrator permission to use `/setup`.";
@@ -377,11 +548,9 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
   }
 
   const history = sessionId ? getHistory(sessionId) : [];
-  const userConfirmed = /\bconfirm\b/i.test(prompt);
 
   let promptText = buildPrompt(history, prompt);
   const results = [];
-  const blocked = [];
   let finalMessageContent = null;
   let hitRoundCap = true;
 
@@ -402,15 +571,13 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
         let toolResultText;
         if (!tool) {
           toolResultText = `Unknown tool "${call.name}"`;
-        } else if (tool.destructive && !userConfirmed) {
-          const label = `${call.name.replace(/_/g, ' ')}: ${call.arguments.channelName || call.arguments.roleName || call.arguments.memberName}`;
-          blocked.push(label);
-          console.log(`[ai-tools] blocked destructive (no confirm) | guild=${guild.id} requester=${requesterMember?.id || 'unknown'} | ${call.name}(${JSON.stringify(call.arguments)})`);
-          toolResultText = 'Skipped — this is destructive and the prompt did not include "confirm".';
         } else {
           try {
             toolResultText = await tool.run(call.arguments, guild);
-            if (tool.destructive) console.log(`[ai-tools] destructive action | guild=${guild.id} requester=${requesterMember?.id || 'unknown'} | ${call.name} -> ${toolResultText}`);
+            if (tool.destructive) {
+              console.log(`[ai-tools] destructive action | guild=${guild.id} requester=${requesterMember?.id || 'unknown'} | ${call.name} -> ${toolResultText}`);
+              await postAuditLog(guild, requesterMember, call.name, call.arguments, toolResultText);
+            }
           } catch (err) {
             toolResultText = `Failed on ${call.name}: ${err.message}`;
           }
@@ -422,7 +589,6 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
         if (!silent) results.push(toolResultText);
       }
 
-      // feed the model what happened, then loop
       const feedback = callResults.map((r) => `- ${r.name} -> ${r.toolResultText}`).join('\n');
       promptText += `\n${raw}\nTool results:\n${feedback}\nAssistant:`;
     }
@@ -431,10 +597,6 @@ async function runAiSetup(prompt, guild, sessionId, requesterMember) {
   }
 
   let summary = results.length ? `Done!\n${results.join('\n')}` : '';
-  if (blocked.length) {
-    const uniqueBlocked = [...new Set(blocked)];
-    summary += `${summary ? '\n\n' : ''}Skipped these for safety — add the word "confirm" to your prompt if you really want them:\n${uniqueBlocked.join('\n')}`;
-  }
   summary = summary || finalMessageContent || 'No actions were taken.';
   if (hitRoundCap) {
     summary += `\n\n(Stopped after ${MAX_TOOL_ROUNDS} steps to be safe — send another /setup message to continue.)`;
